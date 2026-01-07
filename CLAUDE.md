@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-We are building a **document extraction control plane** — a B2B infrastructure SaaS that governs enterprise document extraction pipelines without ever touching the documents themselves.
+A **document extraction control plane** — B2B infrastructure SaaS that governs enterprise document extraction pipelines without ever touching the documents themselves.
 
 **Core Value Proposition**: "We govern document extraction systems without touching documents."
 
@@ -14,83 +14,76 @@ We are building a **document extraction control plane** — a B2B infrastructure
 | Structural features | PDFs | Drift risk scores |
 | Bounding box coordinates | Extracted text | Reliability scores |
 | Element types | Field values | Correction rules |
-| Extractor metadata | PII/PHI | Audit certificates |
-| Confidence scores | Any content | Extractor recommendations |
+| Extractor metadata | PII/PHI | Audit trail |
+| Confidence scores | Any content | |
 
 ---
 
-## Architecture
+## Project Structure (MVP)
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        CUSTOMER ENVIRONMENT (Their Network)                  │
-│  ┌─────────────┐    ┌──────────────────┐    ┌─────────────────────────────┐ │
-│  │   PDFs /    │───▶│ Local Extraction │───▶│    Results Database         │ │
-│  │  Documents  │    │ (NVIDIA/OCR/VLM) │    │    (Their Storage)          │ │
-│  └─────────────┘    └────────┬─────────┘    └─────────────────────────────┘ │
-│                              │                           ▲                   │
-│                              │ Metadata Only             │ Decisions + Rules │
-└──────────────────────────────┼───────────────────────────┼───────────────────┘
-                               │                           │
-                               ▼                           │
-┌──────────────────────────────────────────────────────────┴───────────────────┐
-│                           CONTROL PLANE (Our Service)                         │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                         API Gateway / Ingress                            │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                        │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │  DECISION ENGINE: Template Matching │ Drift Detection │ Reliability     │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                        │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │  EXTENDED: Extractor Arbitration │ Anomaly Detection │ Audit Certs      │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                        │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │  DATA: PostgreSQL (Events) │ TimescaleDB (Metrics) │ Redis │ Trillian   │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-└───────────────────────────────────────────────────────────────────────────────┘
+control-plane/
+├── CLAUDE.md               # This file
+├── README.md               # Setup and API docs
+├── pyproject.toml          # Python dependencies
+├── docker-compose.yml      # Infrastructure (3 services)
+├── .env.example            # Environment template
+├── Makefile                # Dev commands
+├── alembic.ini             # Migration config
+├── migrations/             # Database migrations
+│   └── versions/           # Migration files
+├── src/
+│   ├── __init__.py
+│   ├── config.py           # pydantic-settings configuration
+│   ├── db.py               # Database + RLS setup
+│   ├── models.py           # SQLModel models + Pydantic schemas
+│   ├── security.py         # API key hashing, validation
+│   ├── audit.py            # Audit logging
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── main.py         # FastAPI app + security middleware
+│   │   ├── routes.py       # All MVP endpoints
+│   │   ├── auth.py         # API key authentication
+│   │   └── deps.py         # Dependencies (DB, tenant context)
+│   └── services/
+│       ├── __init__.py
+│       ├── template_matcher.py    # Cosine similarity matching
+│       ├── drift_detector.py      # Z-score drift detection
+│       ├── reliability_scorer.py  # Weighted reliability scoring
+│       └── correction_rules.py    # Deterministic rule selection
+├── tests/                  # Test suite
+└── docs/                   # Extended documentation
 ```
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descriptions.
 
 ---
 
-## Technology Stack
+## Technology Stack (MVP)
 
-### Infrastructure
-- **Workflow**: Temporal.io (durable execution, saga pattern, human-in-the-loop)
-- **Events**: Apache Kafka (event sourcing, cross-service communication)
-- **Gateway**: Kong or Envoy (rate limiting, auth, routing)
+### Infrastructure (3 Services)
+- **PostgreSQL 16**: Event store with Row-Level Security (multi-tenant)
+- **Redis 7**: Cache, rate limiting, session state
+- **Temporal**: Workflow orchestration (durable execution)
 
-### Data Stores
-- **PostgreSQL**: Event store with Row-Level Security (multi-tenant)
-- **TimescaleDB**: Time-series metrics (drift, reliability, latency)
-- **Trillian**: Merkle tree audit log (tamper-proof, RFC 3161)
-- **Redis**: Thompson Sampling params, session cache, materialized views
-- **Elasticsearch**: Template and document search
+### Application
+- **FastAPI**: Async API with automatic OpenAPI
+- **SQLModel**: SQLAlchemy + Pydantic combined
+- **pydantic-settings**: Validated configuration
 
-### ML/Decision Engine
-- **Vowpal Wabbit**: Contextual bandits for extractor selection
-- **Isolation Forest + VAE**: Anomaly detection
-- **Prophet + PELT**: Time-series forecasting and changepoint detection
-
-### Languages
-- **Python 3.11+**: ML, data processing, Temporal workers, FastAPI
-- **Rust**: Performance-critical fingerprinting and similarity computation
+### Security
+- API key authentication (SHA256 hashed)
+- Row-Level Security for tenant isolation
+- Audit logging for all sensitive operations
+- Security headers middleware
 
 ---
 
 ## Design Principles
 
-1. **Metadata Only**: Never accept document content. All inputs must be structural.
-2. **Event Sourced**: Every decision is an immutable event. Full audit trail by design.
-3. **Tenant Isolated**: Row-level security in PostgreSQL. No data leakage between tenants.
-4. **Deterministic When Possible**: Correction rules are deterministic. ML has reproducibility seeds.
-5. **Fail Safe**: When uncertain, return REVIEW not MATCH. Prefer false positives.
-6. **Privacy by Design**: Differential privacy for cross-customer analytics.
-7. **Composable**: Each capability is independently usable via API.
+1. **Metadata Only**: Never accept document content
+2. **Tenant Isolated**: PostgreSQL RLS enforces data separation
+3. **Fail Safe**: When uncertain, return REVIEW not MATCH
+4. **Audit Everything**: All operations logged for compliance
+5. **Simple First**: Start simple, optimize when needed
 
 ---
 
@@ -106,74 +99,27 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed component descript
 | Drift score | 0.30 - 0.50 | Review required (orange) |
 | Drift score | > 0.50 | Critical drift (red) |
 | Reliability score | ≥ 0.80 | Auto-process |
-| Reliability score | < 0.80 | Review required |
-
----
-
-## Project Structure
-
-```
-control-plane/
-├── CLAUDE.md                    # This file
-├── docs/
-│   ├── ARCHITECTURE.md          # System architecture details
-│   ├── SPEC.md                  # Algorithm specifications (14 capabilities)
-│   ├── MODELS.md                # Pydantic model definitions
-│   └── API.md                   # OpenAPI endpoint reference
-├── pyproject.toml               # Python dependencies
-├── docker-compose.yml           # Local dev stack
-├── .env.example                 # Environment template
-├── Makefile                     # Dev commands
-└── src/
-    ├── api/                     # FastAPI routes + middleware
-    │   ├── routes/              # evaluate, templates, corrections, etc.
-    │   └── middleware/          # auth, tenant, rate_limit
-    ├── core/                    # models, events, config
-    ├── engine/                  # Decision engine components
-    │   ├── template_matcher.py
-    │   ├── drift_detector.py
-    │   ├── reliability_scorer.py
-    │   ├── anomaly_detector.py
-    │   └── extractor_arbitrator.py
-    ├── workflows/               # Temporal workflows + activities
-    ├── audit/                   # Certificate generation, Merkle tree
-    ├── analytics/               # Seasonality, benchmarks
-    ├── feedback/                # Correction processing
-    ├── schema/                  # Schema evolution governance
-    └── infrastructure/          # Database, Redis, Kafka clients
-```
+| Reliability score | < 0.80 | Enhanced validation |
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-- Docker & Docker Compose
-- Python 3.11+
-- Make
-
-### Setup
-
 ```bash
-# Clone and setup
-git clone <repo>
-cd control-plane
-
-# Start infrastructure (PostgreSQL, TimescaleDB, Redis, Temporal, Kafka)
+# Initial setup
 make setup
+
+# IMPORTANT: Generate secure secrets in .env
+openssl rand -hex 32
+
+# Start infrastructure
 make up
 
-# Install Python dependencies
-make install
-
-# Run database migrations
+# Run migrations
 make migrate
 
-# Start the API server (development mode)
+# Start API server
 make dev
-
-# In another terminal, start Temporal worker
-make worker
 ```
 
 ### Common Commands
@@ -183,76 +129,94 @@ make dev        # Start API server with hot reload
 make test       # Run pytest with coverage
 make lint       # Run ruff + mypy
 make logs       # Tail docker-compose logs
+make db-shell   # Open PostgreSQL shell
 make clean      # Stop containers, remove volumes
 ```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and configure:
-
-```bash
-DATABASE_URL=postgresql://user:pass@localhost:5432/controlplane
-TIMESCALE_URL=postgresql://user:pass@localhost:5433/metrics
-REDIS_URL=redis://localhost:6379
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-TEMPORAL_HOST=localhost:7233
-TEMPORAL_NAMESPACE=controlplane
-JWT_SECRET=your-secret-key
-```
-
----
-
-## Capabilities (14 Total)
-
-| # | Capability | Purpose | See |
-|---|------------|---------|-----|
-| 1 | Template Matching | Identify documents by structural fingerprint | [SPEC.md#1](docs/SPEC.md#1-template-matching) |
-| 2 | Drift Detection | Detect extraction behavior changes over time | [SPEC.md#2](docs/SPEC.md#2-drift-detection) |
-| 3 | Reliability Scoring | Predict extraction accuracy | [SPEC.md#3](docs/SPEC.md#3-reliability-scoring) |
-| 4 | Correction Governance | Deterministic post-processing rules | [SPEC.md#4](docs/SPEC.md#4-correction-governance) |
-| 5 | Extractor Arbitration | Thompson Sampling for extractor selection | [SPEC.md#5](docs/SPEC.md#5-extractor-arbitration) |
-| 6 | Cost-Aware Routing | Pareto-optimal cost/reliability routing | [SPEC.md#6](docs/SPEC.md#6-cost-aware-routing) |
-| 7 | Anomaly Detection | Fraud and quality issue detection | [SPEC.md#7](docs/SPEC.md#7-anomaly-detection) |
-| 8 | Predictive Drift | Forecast drift before thresholds crossed | [SPEC.md#8](docs/SPEC.md#8-predictive-drift-alerts) |
-| 9 | Cross-Customer Benchmarks | Privacy-preserving industry comparisons | [SPEC.md#9](docs/SPEC.md#9-cross-customer-benchmarking) |
-| 10 | Audit Certificates | Merkle proofs + RFC 3161 timestamps | [SPEC.md#10](docs/SPEC.md#10-audit-certificates) |
-| 11 | Human Review | Skill-based routing with SLA management | [SPEC.md#11](docs/SPEC.md#11-human-review-orchestration) |
-| 12 | Correction Feedback | Learn from corrections safely | [SPEC.md#12](docs/SPEC.md#12-correction-feedback-loop) |
-| 13 | Schema Evolution | Safe template schema changes | [SPEC.md#13](docs/SPEC.md#13-schema-evolution-governance) |
-| 14 | Seasonality Analysis | Capacity planning and forecasting | [SPEC.md#14](docs/SPEC.md#14-seasonality--capacity-signals) |
 
 ---
 
 ## API Overview
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/evaluate` | POST | Main evaluation endpoint |
-| `/v1/templates` | GET/POST | List/register templates |
-| `/v1/templates/{id}/drift` | GET | Get drift analysis |
-| `/v1/corrections` | POST | Submit correction feedback |
-| `/v1/reviews/{id}` | GET/POST | Review task management |
-| `/v1/certificates/{id}` | GET | Get audit certificate |
-| `/v1/benchmarks` | GET | Cross-customer benchmarks |
-| `/v1/extractors/recommend` | POST | Get extractor recommendation |
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | No | Health check |
+| `/v1/status` | GET | Yes | Detailed status |
+| `/v1/evaluate` | POST | Yes | Evaluate document metadata |
+| `/v1/templates` | GET | Yes | List templates |
+| `/v1/templates` | POST | Yes | Register template |
+| `/v1/templates/{id}` | GET | Yes | Get template details |
 
-See [docs/API.md](docs/API.md) for full specification.
+Authentication: Include `X-API-Key: cp_xxxxx` header.
 
 ---
 
-## Success Metrics
+## MVP Services
 
-- **Latency**: p99 < 100ms for `/v1/evaluate`
-- **Throughput**: 10,000 evaluations/second per node
-- **Accuracy**: Template matching > 95% precision/recall
-- **Drift Detection**: 90% of drifts detected before customer reports
-- **Uptime**: 99.9% availability
+### 1. Template Matching
+Cosine similarity on structural feature vectors.
+- Quick fingerprint lookup for exact matches
+- Vector similarity for fuzzy matching
+
+### 2. Drift Detection
+Z-score based deviation from template baseline.
+- Compares current features to stored baseline
+- Weighted combination of metric-specific drifts
+
+### 3. Reliability Scoring
+Weighted average of factors:
+- Template baseline reliability (40%)
+- Extractor confidence (35%)
+- Drift penalty (25%)
+
+### 4. Correction Rules
+Deterministic rule selection:
+- Template-defined rules first
+- Reliability-based rules added when needed
+- Enhanced validation for low reliability
+
+---
+
+## Security Implementation
+
+### API Key Authentication
+- Keys format: `cp_<32 hex chars>`
+- Stored as SHA256(salt + key)
+- Prefix stored for identification
+- last_used_at tracking
+
+### Row-Level Security
+```sql
+ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON templates
+    USING (tenant_id = current_setting('app.tenant_id')::uuid);
+```
+
+### Audit Logging
+All logged:
+- API key creation/rotation/revocation
+- Template creation/modification
+- Evaluation requests (metadata only)
+- Failed authentication attempts
+- Rate limit violations
+
+---
+
+## Future Enhancements (Not in MVP)
+
+After MVP validation:
+- LSH for O(1) template lookup
+- Prophet for predictive drift
+- Thompson Sampling for extractor selection
+- Kafka for event streaming
+- TimescaleDB for time-series metrics
+- Trillian for Merkle tree audit certificates
 
 ---
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) - System design and data flow
-- [Specifications](docs/SPEC.md) - Algorithm implementations
-- [Models](docs/MODELS.md) - Pydantic data models
-- [API](docs/API.md) - REST endpoint reference
+- [README.md](README.md) - Setup and usage
+- [docs/SPEC.md](docs/SPEC.md) - Full algorithm specifications
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System design
+- [docs/MODELS.md](docs/MODELS.md) - Data models
+- [docs/API.md](docs/API.md) - API reference

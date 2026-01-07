@@ -1,5 +1,5 @@
 services:
-  # PostgreSQL - Event Store
+  # PostgreSQL - Event Store + RLS Multi-tenancy
   postgres:
     image: postgres:16-alpine
     container_name: controlplane-postgres
@@ -17,34 +17,16 @@ services:
       timeout: 5s
       retries: 5
 
-  # TimescaleDB - Time-series Metrics
-  timescaledb:
-    image: timescale/timescaledb:2.13.1-pg16
-    container_name: controlplane-timescale
-    environment:
-      POSTGRES_USER: ${TIMESCALE_USER:-metrics}
-      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:?TIMESCALE_PASSWORD is required}
-      POSTGRES_DB: ${TIMESCALE_DB:-metrics}
-    ports:
-      - "127.0.0.1:5433:5432"
-    volumes:
-      - timescale_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-metrics}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  # Redis - Cache & Thompson Sampling Parameters
+  # Redis - Cache, Rate Limiting, Session State
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     container_name: controlplane-redis
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -52,51 +34,6 @@ services:
       redis-server
       --appendonly yes
       --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
-
-  # Zookeeper - Kafka dependency
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.3
-    container_name: controlplane-zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "127.0.0.1:2181:2181"
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_log:/var/lib/zookeeper/log
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Kafka - Event Streaming
-  kafka:
-    image: confluentinc/cp-kafka:7.5.3
-    container_name: controlplane-kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
 
   # Temporal - Workflow Orchestration
   temporal:
@@ -123,40 +60,9 @@ services:
       retries: 10
       start_period: 30s
 
-  # Temporal Web UI
-  temporal-ui:
-    image: temporalio/ui:2.22.3
-    container_name: controlplane-temporal-ui
-    depends_on:
-      temporal:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:8080:8080"
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-
-  # Kafka UI (optional, for debugging)
-  kafka-ui:
-    image: provectuslabs/kafka-ui:v0.7.1
-    container_name: controlplane-kafka-ui
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:8081:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
-
 volumes:
   postgres_data:
-  timescale_data:
   redis_data:
-  kafka_data:
-  zookeeper_data:
-  zookeeper_log:
 
 networks:
   default:

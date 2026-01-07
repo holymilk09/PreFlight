@@ -21,7 +21,7 @@ setup:
 	python3.11 -m venv .venv
 	@echo "$(BLUE)Installing dependencies...$(RESET)"
 	.venv/bin/pip install --upgrade pip
-	.venv/bin/pip install -e ".[dev,ml]"
+	.venv/bin/pip install -e ".[dev]"
 	@echo "$(BLUE)Setting up pre-commit hooks...$(RESET)"
 	.venv/bin/pre-commit install
 	@echo "$(BLUE)Copying environment template...$(RESET)"
@@ -32,7 +32,7 @@ setup:
 
 ## install: Install dependencies only
 install:
-	pip install -e ".[dev,ml]"
+	pip install -e ".[dev]"
 
 ## up: Start Docker infrastructure
 up: check-env
@@ -42,15 +42,11 @@ up: check-env
 	@echo "  - value: true" >> temporal-config/development.yaml
 	docker compose up -d
 	@echo "$(GREEN)Infrastructure started. Waiting for services to be healthy...$(RESET)"
-	@sleep 10
+	@sleep 5
 	@echo "$(GREEN)Services ready (localhost only):$(RESET)"
-	@echo "  - PostgreSQL:   127.0.0.1:5432"
-	@echo "  - TimescaleDB:  127.0.0.1:5433"
-	@echo "  - Redis:        127.0.0.1:6379"
-	@echo "  - Kafka:        127.0.0.1:9092"
-	@echo "  - Temporal:     127.0.0.1:7233"
-	@echo "  - Temporal UI:  http://127.0.0.1:8080"
-	@echo "  - Kafka UI:     http://127.0.0.1:8081"
+	@echo "  - PostgreSQL: 127.0.0.1:5432"
+	@echo "  - Redis:      127.0.0.1:6379"
+	@echo "  - Temporal:   127.0.0.1:7233"
 
 ## down: Stop Docker infrastructure
 down:
@@ -102,10 +98,6 @@ migrate-new: check-env
 logs:
 	docker compose logs -f
 
-## logs-infra: Tail infrastructure logs (postgres, redis, kafka, temporal)
-logs-infra:
-	docker compose logs -f postgres timescaledb redis kafka temporal
-
 ## clean: Stop containers and remove volumes
 clean:
 	@echo "$(YELLOW)Stopping containers and removing volumes...$(RESET)"
@@ -115,7 +107,7 @@ clean:
 
 ## shell: Open Python shell with app context
 shell:
-	python -c "from src.core.config import settings; print('Settings loaded')" && python
+	python -c "from src.config import settings; print('Settings loaded')" && python
 
 ## db-shell: Open PostgreSQL shell
 db-shell:
