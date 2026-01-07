@@ -1,5 +1,16 @@
 """Pytest configuration and shared fixtures."""
 
+import os
+
+# Set required environment variables BEFORE any src imports
+# These are test values - not used in production
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
+os.environ.setdefault("POSTGRES_PASSWORD", "test_password_12345678901234567890")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("REDIS_PASSWORD", "test_redis_password_1234567890")
+os.environ.setdefault("JWT_SECRET", "test_jwt_secret_1234567890123456789012345678901234567890")
+os.environ.setdefault("API_KEY_SALT", "test_api_key_salt_12345678901234567890123456789012")
+
 import pytest
 from uuid import UUID
 from uuid_extensions import uuid7
