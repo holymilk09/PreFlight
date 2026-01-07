@@ -9,7 +9,7 @@ from pydantic import Field, field_validator
 from sqlmodel import Column, Field as SQLField, Relationship, SQLModel
 from sqlalchemy import Text
 from sqlalchemy.dialects.postgresql import INET, JSONB
-from uuid7 import uuid7
+from uuid_extensions import uuid7
 
 
 # -----------------------------------------------------------------------------

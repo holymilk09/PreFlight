@@ -3,7 +3,8 @@
 import time
 from dataclasses import dataclass
 
-import redis.asyncio as redis
+import redis.asyncio as aioredis
+from redis.exceptions import NoScriptError
 
 from src.config import settings
 
@@ -56,7 +57,7 @@ class RateLimiter:
     no race conditions between check and increment.
     """
 
-    def __init__(self, redis_client: redis.Redis) -> None:
+    def __init__(self, redis_client: aioredis.Redis) -> None:
         self.redis = redis_client
         self.window_seconds = 60  # 1 minute window
         self._script_sha: str | None = None
@@ -90,7 +91,7 @@ class RateLimiter:
                 self.window_seconds,
                 now,
             )
-        except redis.exceptions.NoScriptError:
+        except NoScriptError:
             # Script was flushed, reload it
             self._script_sha = None
             script_sha = await self._get_script_sha()
@@ -121,15 +122,15 @@ class RateLimiter:
 
 
 # Global Redis client and rate limiter (initialized on first use)
-_redis_client: redis.Redis | None = None
+_redis_client: aioredis.Redis | None = None
 _rate_limiter: RateLimiter | None = None
 
 
-async def get_redis_client() -> redis.Redis:
+async def get_redis_client() -> aioredis.Redis:
     """Get or create Redis client with connection pooling."""
     global _redis_client
     if _redis_client is None:
-        _redis_client = redis.from_url(
+        _redis_client = aioredis.from_url(
             settings.redis_url,
             password=settings.redis_password,
             encoding="utf-8",

@@ -86,12 +86,12 @@ class TestRateLimiter:
     @pytest.mark.asyncio
     async def test_script_reload_on_noscript_error(self, mock_redis):
         """Script should be reloaded if Redis returns NOSCRIPT error."""
-        import redis.asyncio as redis
+        from redis.exceptions import NoScriptError
 
         # First evalsha fails with NoScriptError, second succeeds
         mock_redis.evalsha = AsyncMock(
             side_effect=[
-                redis.exceptions.NoScriptError("Script not found"),
+                NoScriptError("Script not found"),
                 [1, 0, 60],
             ]
         )

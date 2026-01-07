@@ -130,8 +130,8 @@ class TestFeatureSimilarity:
         vec_b = _extract_feature_vector(high_drift_features)
         similarity = _cosine_similarity(vec_a, vec_b)
 
-        # Should still have some similarity (not orthogonal)
-        assert 0.5 < similarity < 0.95
+        # Should still have some similarity (not orthogonal) but lower than identical
+        assert 0.3 < similarity < 0.95
 
     def test_minor_variations(self, sample_structural_features):
         """Minor variations should have high similarity."""

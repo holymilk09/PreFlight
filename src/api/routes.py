@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
-from uuid7 import uuid7
+from uuid_extensions import uuid7
 
 from src.api.auth import CurrentTenant
 from src.api.deps import TenantDbSession

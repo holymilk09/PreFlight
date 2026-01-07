@@ -2,7 +2,7 @@
 
 import pytest
 from uuid import UUID
-from uuid7 import uuid7
+from uuid_extensions import uuid7
 
 from src.models import (
     CorrectionRule,
