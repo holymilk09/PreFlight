@@ -9,7 +9,8 @@ from fastapi.responses import JSONResponse
 
 from src.config import settings
 from src.db import close_db, init_db
-from src.security import generate_request_id
+from src.security import generate_request_id, hash_api_key
+from src.services.rate_limiter import check_rate_limit, close_redis_client, get_redis_client
 
 
 @asynccontextmanager
@@ -17,8 +18,10 @@ async def lifespan(app: FastAPI) -> Any:
     """Application lifespan handler for startup/shutdown."""
     # Startup
     await init_db()
+    await get_redis_client()  # Initialize Redis connection
     yield
     # Shutdown
+    await close_redis_client()
     await close_db()
 
 
@@ -76,6 +79,83 @@ async def request_id_middleware(request: Request, call_next: Any) -> Response:
     response.headers["X-Request-ID"] = request_id
 
     return response
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
+    """Apply rate limiting based on API key or IP address.
+
+    - Authenticated requests: Use per-API-key limit from database
+    - Unauthenticated requests: Use IP-based limit from config
+    - Skip rate limiting for health endpoints
+    """
+    # Skip rate limiting for health endpoints
+    if request.url.path in ("/health", "/"):
+        return await call_next(request)
+
+    # Get client identifier and limit
+    api_key = request.headers.get("X-API-Key")
+    client_ip = request.client.host if request.client else "unknown"
+
+    if api_key and api_key.startswith("cp_") and len(api_key) == 35:
+        # Authenticated request - use API key hash as identifier
+        # Note: Actual rate limit from DB is checked in auth, this is a fallback
+        identifier = f"key:{hash_api_key(api_key)[:16]}"
+        limit = settings.rate_limit_per_minute
+    else:
+        # Unauthenticated request - use IP address
+        identifier = f"ip:{client_ip}"
+        limit = settings.rate_limit_unauthenticated
+
+    # Check rate limit
+    try:
+        result = await check_rate_limit(identifier, limit)
+    except Exception:
+        # If Redis is unavailable, allow request but log
+        import structlog
+        logger = structlog.get_logger()
+        logger.warning("rate_limit_redis_unavailable", identifier=identifier)
+        return await call_next(request)
+
+    # Add rate limit headers
+    if result.allowed:
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(result.limit)
+        response.headers["X-RateLimit-Remaining"] = str(result.remaining)
+        response.headers["X-RateLimit-Reset"] = str(result.reset_after_seconds)
+        return response
+    else:
+        # Rate limit exceeded - log and return 429
+        from src.models import AuditAction, AuditLog
+        from src.db import async_session_maker
+
+        async with async_session_maker() as session:
+            audit_entry = AuditLog(
+                action=AuditAction.RATE_LIMIT_EXCEEDED,
+                details={
+                    "identifier": identifier[:50],  # Truncate for safety
+                    "path": str(request.url.path),
+                    "method": request.method,
+                    "limit": limit,
+                },
+                ip_address=client_ip,
+            )
+            session.add(audit_entry)
+            await session.commit()
+
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": "Rate limit exceeded. Please retry later.",
+                "retry_after": result.reset_after_seconds,
+            },
+            headers={
+                "X-RateLimit-Limit": str(result.limit),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(result.reset_after_seconds),
+                "Retry-After": str(result.reset_after_seconds),
+            },
+        )
 
 
 # CORS middleware - only add if origins are configured

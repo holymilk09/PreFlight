@@ -57,10 +57,6 @@ dev: check-env
 	@echo "$(BLUE)Starting API server on 127.0.0.1:8000...$(RESET)"
 	uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
 
-## worker: Start Temporal worker
-worker: check-env
-	@echo "$(BLUE)Starting Temporal worker...$(RESET)"
-	python -m src.workflows.worker
 
 ## test: Run tests with coverage
 test:

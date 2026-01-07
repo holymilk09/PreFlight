@@ -14,13 +14,38 @@ https://api.controlplane.example.com/v1
 
 ## Authentication
 
-All endpoints require JWT bearer token authentication:
+All endpoints (except `/health`) require API key authentication:
 
 ```
-Authorization: Bearer <jwt_token>
+X-API-Key: cp_<32 hex characters>
 ```
 
-Tenant ID is extracted from the JWT claims.
+API keys are issued per-tenant and are hashed (SHA256) before storage. The tenant is identified from the API key lookup.
+
+**Key Format**: `cp_` prefix followed by 32 hexadecimal characters (e.g., `cp_a1b2c3d4...`)
+
+---
+
+## MVP vs Future Endpoints
+
+This document includes both **MVP endpoints** (currently implemented) and **future endpoints** (planned).
+
+**MVP Endpoints** (available now):
+- `GET /health` - Health check (no auth required)
+- `POST /v1/evaluate` - Core evaluation endpoint
+- `GET /v1/templates` - List templates
+- `POST /v1/templates` - Register template
+- `GET /v1/templates/{id}` - Get template details
+- `GET /v1/status` - Authenticated status check
+
+**Future Endpoints** (documented for planning, not yet implemented):
+- Template versioning and drift analysis
+- Correction feedback loop
+- Human review workflows
+- Audit certificates
+- Cross-customer benchmarks
+- Extractor recommendations
+- Seasonality analytics
 
 ---
 
@@ -323,7 +348,7 @@ All errors follow this format:
 ```
 
 **Common Error Codes**:
-- `UNAUTHORIZED`: Invalid or missing JWT
+- `UNAUTHORIZED`: Invalid or missing API key
 - `FORBIDDEN`: Tenant access denied
 - `TEMPLATE_NOT_FOUND`: Template does not exist
 - `VALIDATION_ERROR`: Request validation failed
