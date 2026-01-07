@@ -280,3 +280,19 @@ class HealthResponse(SQLModel):
 
     status: str
     version: str = "0.1.0"
+
+
+class ServiceStatus(SQLModel):
+    """Individual service status."""
+
+    healthy: bool
+    latency_ms: float | None = None
+    error: str | None = None
+
+
+class DetailedHealthResponse(SQLModel):
+    """Detailed health check response for /v1/status."""
+
+    status: str
+    version: str = "0.1.0"
+    services: dict[str, ServiceStatus] = Field(default_factory=dict)

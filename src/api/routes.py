@@ -13,10 +13,11 @@ from src.api.deps import TenantDbSession
 from src.audit import log_evaluation_requested, log_template_created
 from src.models import (
     Decision,
+    DetailedHealthResponse,
     Evaluation,
     EvaluateRequest,
     EvaluateResponse,
-    HealthResponse,
+    ServiceStatus,
     Template,
     TemplateCreate,
     TemplateResponse,
@@ -331,19 +332,48 @@ async def get_template(
 
 @router.get(
     "/status",
-    response_model=HealthResponse,
+    response_model=DetailedHealthResponse,
     tags=["Health"],
     summary="Get detailed service status",
 )
 async def get_status(
     tenant: CurrentTenant,
-) -> HealthResponse:
+    db: TenantDbSession,
+) -> DetailedHealthResponse:
     """Get detailed service status (requires authentication).
 
     Unlike /health, this endpoint requires authentication and
-    returns more detailed status information.
+    returns detailed status of all dependencies (database, Redis).
     """
-    return HealthResponse(
-        status="healthy",
+    from sqlalchemy import text
+    from src.services.rate_limiter import get_redis_client
+
+    services: dict[str, ServiceStatus] = {}
+
+    # Check PostgreSQL
+    try:
+        start = time.perf_counter()
+        await db.execute(text("SELECT 1"))
+        latency = (time.perf_counter() - start) * 1000
+        services["database"] = ServiceStatus(healthy=True, latency_ms=round(latency, 2))
+    except Exception as e:
+        services["database"] = ServiceStatus(healthy=False, error=str(e)[:100])
+
+    # Check Redis
+    try:
+        start = time.perf_counter()
+        redis = await get_redis_client()
+        await redis.ping()
+        latency = (time.perf_counter() - start) * 1000
+        services["redis"] = ServiceStatus(healthy=True, latency_ms=round(latency, 2))
+    except Exception as e:
+        services["redis"] = ServiceStatus(healthy=False, error=str(e)[:100])
+
+    # Overall status
+    all_healthy = all(s.healthy for s in services.values())
+
+    return DetailedHealthResponse(
+        status="healthy" if all_healthy else "degraded",
         version="0.1.0",
+        services=services,
     )
