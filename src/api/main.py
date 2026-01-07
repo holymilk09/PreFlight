@@ -1,16 +1,21 @@
 """Document Extraction Control Plane - FastAPI Application."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.config import settings
-from src.db import close_db, init_db
+from src.db import async_session_maker, close_db, init_db
+from src.models import AuditAction, AuditLog
 from src.security import generate_request_id, hash_api_key
 from src.services.rate_limiter import check_rate_limit, close_redis_client, get_redis_client
+
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -81,6 +86,52 @@ async def request_id_middleware(request: Request, call_next: Any) -> Response:
     return response
 
 
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP, handling proxies securely.
+
+    Checks X-Forwarded-For header but only trusts the rightmost IP
+    (closest to our infrastructure) to prevent spoofing.
+    """
+    # If behind a trusted proxy, use X-Forwarded-For
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # Take the rightmost IP (added by our trusted proxy)
+        # This prevents client spoofing via X-Forwarded-For header
+        ips = [ip.strip() for ip in forwarded_for.split(",")]
+        if ips:
+            return ips[-1]
+
+    # Fallback to direct connection IP
+    return request.client.host if request.client else "unknown"
+
+
+async def _log_rate_limit_exceeded(
+    identifier: str,
+    client_ip: str,
+    path: str,
+    method: str,
+    limit: int,
+) -> None:
+    """Log rate limit violation asynchronously (fire-and-forget)."""
+    try:
+        async with async_session_maker() as session:
+            audit_entry = AuditLog(
+                action=AuditAction.RATE_LIMIT_EXCEEDED,
+                details={
+                    "identifier": identifier[:50],
+                    "path": path,
+                    "method": method,
+                    "limit": limit,
+                },
+                ip_address=client_ip,
+            )
+            session.add(audit_entry)
+            await session.commit()
+    except Exception:
+        # Don't let audit logging failure affect the response
+        logger.warning("audit_log_failed", action="rate_limit_exceeded")
+
+
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
     """Apply rate limiting based on API key or IP address.
@@ -95,12 +146,11 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
 
     # Get client identifier and limit
     api_key = request.headers.get("X-API-Key")
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _get_client_ip(request)
 
     if api_key and api_key.startswith("cp_") and len(api_key) == 35:
-        # Authenticated request - use API key hash as identifier
-        # Note: Actual rate limit from DB is checked in auth, this is a fallback
-        identifier = f"key:{hash_api_key(api_key)[:16]}"
+        # Authenticated request - use full API key hash as identifier
+        identifier = f"key:{hash_api_key(api_key)}"
         limit = settings.rate_limit_per_minute
     else:
         # Unauthenticated request - use IP address
@@ -110,11 +160,13 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
     # Check rate limit
     try:
         result = await check_rate_limit(identifier, limit)
-    except Exception:
-        # If Redis is unavailable, allow request but log
-        import structlog
-        logger = structlog.get_logger()
-        logger.warning("rate_limit_redis_unavailable", identifier=identifier)
+    except (ConnectionError, TimeoutError, OSError) as e:
+        # Redis connection issues - fail open but log
+        logger.warning(
+            "rate_limit_redis_unavailable",
+            identifier=identifier[:30],
+            error=str(e),
+        )
         return await call_next(request)
 
     # Add rate limit headers
@@ -125,23 +177,16 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
         response.headers["X-RateLimit-Reset"] = str(result.reset_after_seconds)
         return response
     else:
-        # Rate limit exceeded - log and return 429
-        from src.models import AuditAction, AuditLog
-        from src.db import async_session_maker
-
-        async with async_session_maker() as session:
-            audit_entry = AuditLog(
-                action=AuditAction.RATE_LIMIT_EXCEEDED,
-                details={
-                    "identifier": identifier[:50],  # Truncate for safety
-                    "path": str(request.url.path),
-                    "method": request.method,
-                    "limit": limit,
-                },
-                ip_address=client_ip,
+        # Rate limit exceeded - log asynchronously (don't block response)
+        asyncio.create_task(
+            _log_rate_limit_exceeded(
+                identifier=identifier,
+                client_ip=client_ip,
+                path=str(request.url.path),
+                method=request.method,
+                limit=limit,
             )
-            session.add(audit_entry)
-            await session.commit()
+        )
 
         return JSONResponse(
             status_code=429,
@@ -178,9 +223,6 @@ if settings.cors_origins:
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Handle uncaught exceptions without leaking details."""
-    import structlog
-
-    logger = structlog.get_logger()
     logger.exception(
         "unhandled_exception",
         request_id=getattr(request.state, "request_id", None),

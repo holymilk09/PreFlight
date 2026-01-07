@@ -18,16 +18,54 @@ class RateLimitResult:
     reset_after_seconds: int
 
 
+# Lua script for atomic rate limiting (single round trip, no race conditions)
+RATE_LIMIT_SCRIPT = """
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local window_start = now - window
+
+-- Remove expired entries
+redis.call('ZREMRANGEBYSCORE', key, 0, window_start)
+
+-- Get current count
+local count = redis.call('ZCARD', key)
+
+if count >= limit then
+    -- Over limit - get oldest entry for reset time calculation
+    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+    local reset_after = window
+    if oldest[2] then
+        reset_after = math.ceil(oldest[2] + window - now) + 1
+    end
+    return {0, count, reset_after}
+else
+    -- Under limit - add this request
+    redis.call('ZADD', key, now, tostring(now) .. ':' .. tostring(math.random(1000000)))
+    redis.call('EXPIRE', key, window + 1)
+    return {1, count, window}
+end
+"""
+
+
 class RateLimiter:
     """Sliding window rate limiter using Redis.
 
-    Uses a sorted set to track request timestamps, allowing for accurate
-    sliding window rate limiting without race conditions.
+    Uses a Lua script for atomic operations - single round trip,
+    no race conditions between check and increment.
     """
 
     def __init__(self, redis_client: redis.Redis) -> None:
         self.redis = redis_client
         self.window_seconds = 60  # 1 minute window
+        self._script_sha: str | None = None
+
+    async def _get_script_sha(self) -> str:
+        """Load and cache the Lua script."""
+        if self._script_sha is None:
+            self._script_sha = await self.redis.script_load(RATE_LIMIT_SCRIPT)
+        return self._script_sha
 
     async def check(self, key: str, limit: int) -> RateLimitResult:
         """Check if request is allowed and record it if so.
@@ -40,60 +78,55 @@ class RateLimiter:
             RateLimitResult with allowed status and metadata
         """
         now = time.time()
-        window_start = now - self.window_seconds
 
-        # Use Redis pipeline for atomic operations
-        pipe = self.redis.pipeline()
-
-        # Remove old entries outside the window
-        pipe.zremrangebyscore(key, 0, window_start)
-
-        # Count current requests in window
-        pipe.zcard(key)
-
-        # Add current request (will be rolled back if over limit)
-        request_id = f"{now}"
-        pipe.zadd(key, {request_id: now})
-
-        # Set expiry on the key to auto-cleanup
-        pipe.expire(key, self.window_seconds + 1)
-
-        results = await pipe.execute()
-        current_count = results[1]  # zcard result
-
-        if current_count >= limit:
-            # Over limit - remove the request we just added
-            await self.redis.zrem(key, request_id)
-
-            # Calculate reset time (when oldest request expires)
-            oldest = await self.redis.zrange(key, 0, 0, withscores=True)
-            if oldest:
-                reset_after = int(oldest[0][1] + self.window_seconds - now) + 1
-            else:
-                reset_after = self.window_seconds
-
-            return RateLimitResult(
-                allowed=False,
-                limit=limit,
-                remaining=0,
-                reset_after_seconds=reset_after,
+        try:
+            # Try to use cached script
+            script_sha = await self._get_script_sha()
+            result = await self.redis.evalsha(
+                script_sha,
+                1,  # number of keys
+                key,
+                limit,
+                self.window_seconds,
+                now,
+            )
+        except redis.exceptions.NoScriptError:
+            # Script was flushed, reload it
+            self._script_sha = None
+            script_sha = await self._get_script_sha()
+            result = await self.redis.evalsha(
+                script_sha,
+                1,
+                key,
+                limit,
+                self.window_seconds,
+                now,
             )
 
-        remaining = max(0, limit - current_count - 1)
+        allowed = bool(result[0])
+        current_count = int(result[1])
+        reset_after = int(result[2])
+
+        if allowed:
+            remaining = max(0, limit - current_count - 1)
+        else:
+            remaining = 0
+
         return RateLimitResult(
-            allowed=True,
+            allowed=allowed,
             limit=limit,
             remaining=remaining,
-            reset_after_seconds=self.window_seconds,
+            reset_after_seconds=reset_after,
         )
 
 
-# Global Redis client (initialized on first use)
+# Global Redis client and rate limiter (initialized on first use)
 _redis_client: redis.Redis | None = None
+_rate_limiter: RateLimiter | None = None
 
 
 async def get_redis_client() -> redis.Redis:
-    """Get or create Redis client."""
+    """Get or create Redis client with connection pooling."""
     global _redis_client
     if _redis_client is None:
         _redis_client = redis.from_url(
@@ -101,16 +134,29 @@ async def get_redis_client() -> redis.Redis:
             password=settings.redis_password,
             encoding="utf-8",
             decode_responses=True,
+            max_connections=20,  # Connection pool limit
+            socket_connect_timeout=5,
+            socket_timeout=5,
         )
     return _redis_client
 
 
 async def close_redis_client() -> None:
     """Close Redis client on shutdown."""
-    global _redis_client
+    global _redis_client, _rate_limiter
     if _redis_client is not None:
         await _redis_client.close()
         _redis_client = None
+        _rate_limiter = None
+
+
+async def _get_rate_limiter() -> RateLimiter:
+    """Get or create rate limiter singleton."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        client = await get_redis_client()
+        _rate_limiter = RateLimiter(client)
+    return _rate_limiter
 
 
 async def check_rate_limit(
@@ -128,7 +174,6 @@ async def check_rate_limit(
     Returns:
         RateLimitResult with status
     """
-    client = await get_redis_client()
-    limiter = RateLimiter(client)
+    limiter = await _get_rate_limiter()
     key = f"{prefix}:{identifier}"
     return await limiter.check(key, limit)
