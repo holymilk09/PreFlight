@@ -16,11 +16,15 @@ from uuid import UUID
 from uuid_extensions import uuid7
 
 from src.models import (
+    APIKey,
+    AuditLog,
     CorrectionRule,
+    Evaluation,
     ExtractorMetadata,
     StructuralFeatures,
     Template,
     TemplateStatus,
+    Tenant,
 )
 
 
@@ -111,6 +115,7 @@ def low_confidence_extractor() -> ExtractorMetadata:
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlmodel import SQLModel
 
@@ -141,6 +146,69 @@ async def test_engine():
     # Ensure tables exist (safe to call multiple times)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+
+    # Set up RLS policies (idempotent - will not error if already exist)
+    async with engine.begin() as conn:
+        # Create a non-superuser role for RLS testing (superusers bypass all RLS)
+        await conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'test_rls_user') THEN
+                    CREATE ROLE test_rls_user WITH LOGIN PASSWORD 'test_rls_password';
+                END IF;
+            END
+            $$
+        """))
+        # Grant privileges to the test role
+        await conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO test_rls_user"))
+        await conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO test_rls_user"))
+        await conn.execute(text("GRANT USAGE ON SCHEMA public TO test_rls_user"))
+
+        # Enable RLS on tables (FORCE makes it apply to table owner too)
+        await conn.execute(text("ALTER TABLE templates ENABLE ROW LEVEL SECURITY"))
+        await conn.execute(text("ALTER TABLE templates FORCE ROW LEVEL SECURITY"))
+        await conn.execute(text("ALTER TABLE evaluations ENABLE ROW LEVEL SECURITY"))
+        await conn.execute(text("ALTER TABLE evaluations FORCE ROW LEVEL SECURITY"))
+        await conn.execute(text("ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY"))
+        await conn.execute(text("ALTER TABLE api_keys FORCE ROW LEVEL SECURITY"))
+
+        # Drop existing policies if they exist (for idempotency)
+        await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_templates ON templates"))
+        await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_evaluations ON evaluations"))
+        await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_api_keys ON api_keys"))
+
+        # Create RLS policies (NULLIF handles empty strings gracefully)
+        # Using WITH CHECK allows INSERTs that match the tenant context
+        await conn.execute(text("""
+            CREATE POLICY tenant_isolation_templates ON templates
+                FOR ALL
+                USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+                WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+        """))
+        await conn.execute(text("""
+            CREATE POLICY tenant_isolation_evaluations ON evaluations
+                FOR ALL
+                USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+                WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+        """))
+        await conn.execute(text("""
+            CREATE POLICY tenant_isolation_api_keys ON api_keys
+                FOR ALL
+                USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+                WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+        """))
+
+    # Clean up test data before each test for isolation
+    async with engine.begin() as conn:
+        # Truncate tables in correct order (respecting foreign keys)
+        # Disable RLS temporarily for cleanup
+        await conn.execute(text("SET session_replication_role = 'replica'"))
+        await conn.execute(text("TRUNCATE TABLE audit_log CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE evaluations CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE templates CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE api_keys CASCADE"))
+        await conn.execute(text("TRUNCATE TABLE tenants CASCADE"))
+        await conn.execute(text("SET session_replication_role = 'origin'"))
 
     yield engine
 
@@ -268,6 +336,16 @@ async def test_client(
     original_session_maker = db.async_session_maker
     db.async_session_maker = test_session_maker
 
+    # Patch the audit module's reference to async_session_maker
+    from src import audit
+    original_audit_session_maker = audit.async_session_maker
+    audit.async_session_maker = test_session_maker
+
+    # Patch the auth module's reference to async_session_maker
+    from src.api import auth
+    original_auth_session_maker = auth.async_session_maker
+    auth.async_session_maker = test_session_maker
+
     # Patch the global Redis client and rate limiter
     original_redis_client = rate_limiter._redis_client
     original_rate_limiter = rate_limiter._rate_limiter
@@ -281,6 +359,8 @@ async def test_client(
 
     # Restore original values
     db.async_session_maker = original_session_maker
+    audit.async_session_maker = original_audit_session_maker
+    auth.async_session_maker = original_auth_session_maker
     rate_limiter._redis_client = original_redis_client
     rate_limiter._rate_limiter = original_rate_limiter
     app.dependency_overrides.clear()
@@ -348,6 +428,16 @@ async def authenticated_client(
     original_session_maker = db.async_session_maker
     db.async_session_maker = test_session_maker
 
+    # Patch the audit module's reference to async_session_maker
+    from src import audit
+    original_audit_session_maker = audit.async_session_maker
+    audit.async_session_maker = test_session_maker
+
+    # Patch the auth module's reference to async_session_maker
+    from src.api import auth
+    original_auth_session_maker = auth.async_session_maker
+    auth.async_session_maker = test_session_maker
+
     # Patch the global Redis client and rate limiter
     original_redis_client = rate_limiter._redis_client
     original_rate_limiter = rate_limiter._rate_limiter
@@ -363,6 +453,8 @@ async def authenticated_client(
 
     # Restore original values
     db.async_session_maker = original_session_maker
+    audit.async_session_maker = original_audit_session_maker
+    auth.async_session_maker = original_auth_session_maker
     rate_limiter._redis_client = original_redis_client
     rate_limiter._rate_limiter = original_rate_limiter
     app.dependency_overrides.clear()

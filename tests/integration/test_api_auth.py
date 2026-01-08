@@ -68,16 +68,23 @@ class TestAPIKeyAuthentication:
         self,
         test_client: AsyncClient,
         test_api_key,
-        db_session,
+        test_engine,
     ):
         """Revoked API key should return 401."""
         from datetime import datetime
+        from sqlalchemy import update
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        from src.models import APIKey
 
         api_key_record, plain_key = test_api_key
 
-        # Revoke the key
-        api_key_record.revoked_at = datetime.utcnow()
-        await db_session.flush()
+        # Use a new session to update the key (must commit for visibility)
+        session_maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+        async with session_maker() as session:
+            # Revoke the key via UPDATE statement
+            stmt = update(APIKey).where(APIKey.id == api_key_record.id).values(revoked_at=datetime.utcnow())
+            await session.execute(stmt)
+            await session.commit()
 
         response = await test_client.get(
             "/v1/status",
