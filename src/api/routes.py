@@ -263,7 +263,8 @@ async def create_template(
 
     db.add(template)
     await db.commit()
-    await db.refresh(template)
+    # Note: No refresh needed - all fields are populated from the constructor
+    # Refresh would fail with RLS because SET LOCAL expires after commit
 
     # Log audit event
     await log_template_created(
