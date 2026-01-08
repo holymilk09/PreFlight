@@ -1,0 +1,209 @@
+"""Integration tests for API authentication."""
+
+import pytest
+from datetime import datetime
+from unittest.mock import patch, AsyncMock
+
+from httpx import AsyncClient
+
+
+class TestAPIKeyAuthentication:
+    """Tests for API key authentication flow."""
+
+    @pytest.mark.asyncio
+    async def test_missing_api_key_returns_401(self, test_client: AsyncClient):
+        """Request without API key should return 401."""
+        response = await test_client.get("/v1/status")
+
+        assert response.status_code == 401
+        assert "Missing API key" in response.json()["detail"]
+        assert response.headers.get("WWW-Authenticate") == "ApiKey"
+
+    @pytest.mark.asyncio
+    async def test_invalid_format_no_prefix_returns_401(self, test_client: AsyncClient):
+        """API key without cp_ prefix should return 401."""
+        response = await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": "abc123def456abc123def456abc123de"},
+        )
+
+        assert response.status_code == 401
+        assert "Invalid API key format" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_format_wrong_length_returns_401(self, test_client: AsyncClient):
+        """API key with wrong length should return 401."""
+        response = await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": "cp_tooshort"},
+        )
+
+        assert response.status_code == 401
+        assert "Invalid API key format" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_key_not_in_database_returns_401(self, test_client: AsyncClient):
+        """API key not in database should return 401."""
+        # Valid format but not in database
+        fake_key = "cp_" + "a" * 32
+
+        response = await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": fake_key},
+        )
+
+        assert response.status_code == 401
+        assert "Invalid API key" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_valid_key_returns_200(self, authenticated_client: AsyncClient):
+        """Valid API key should allow access."""
+        response = await authenticated_client.get("/v1/status")
+
+        assert response.status_code == 200
+        assert "status" in response.json()
+
+    @pytest.mark.asyncio
+    async def test_revoked_key_returns_401(
+        self,
+        test_client: AsyncClient,
+        test_api_key,
+        db_session,
+    ):
+        """Revoked API key should return 401."""
+        from datetime import datetime
+
+        api_key_record, plain_key = test_api_key
+
+        # Revoke the key
+        api_key_record.revoked_at = datetime.utcnow()
+        await db_session.flush()
+
+        response = await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": plain_key},
+        )
+
+        assert response.status_code == 401
+        assert "revoked" in response.json()["detail"].lower()
+
+
+class TestAuthenticatedTenant:
+    """Tests for AuthenticatedTenant class."""
+
+    def test_has_scope_direct_match(self):
+        """has_scope should return True for direct scope match."""
+        from src.api.auth import AuthenticatedTenant
+        from uuid_extensions import uuid7
+
+        tenant = AuthenticatedTenant(
+            tenant_id=uuid7(),
+            tenant_name="Test",
+            api_key_id=uuid7(),
+            api_key_name="test-key",
+            scopes=["read", "write"],
+            rate_limit=1000,
+        )
+
+        assert tenant.has_scope("read") is True
+        assert tenant.has_scope("write") is True
+        assert tenant.has_scope("admin") is False
+
+    def test_has_scope_wildcard(self):
+        """has_scope should return True for wildcard scope."""
+        from src.api.auth import AuthenticatedTenant
+        from uuid_extensions import uuid7
+
+        tenant = AuthenticatedTenant(
+            tenant_id=uuid7(),
+            tenant_name="Test",
+            api_key_id=uuid7(),
+            api_key_name="test-key",
+            scopes=["*"],
+            rate_limit=1000,
+        )
+
+        assert tenant.has_scope("anything") is True
+        assert tenant.has_scope("read") is True
+        assert tenant.has_scope("admin") is True
+
+    def test_has_scope_empty_scopes(self):
+        """has_scope should return False for empty scopes."""
+        from src.api.auth import AuthenticatedTenant
+        from uuid_extensions import uuid7
+
+        tenant = AuthenticatedTenant(
+            tenant_id=uuid7(),
+            tenant_name="Test",
+            api_key_id=uuid7(),
+            api_key_name="test-key",
+            scopes=[],
+            rate_limit=1000,
+        )
+
+        assert tenant.has_scope("read") is False
+
+
+class TestSecurityHeaders:
+    """Tests for security headers on authenticated endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_security_headers_present(self, authenticated_client: AsyncClient):
+        """Security headers should be present on all responses."""
+        response = await authenticated_client.get("/v1/status")
+
+        assert response.headers.get("X-Content-Type-Options") == "nosniff"
+        assert response.headers.get("X-Frame-Options") == "DENY"
+        assert response.headers.get("X-XSS-Protection") == "1; mode=block"
+        assert "strict-origin" in response.headers.get("Referrer-Policy", "")
+        assert "no-store" in response.headers.get("Cache-Control", "")
+
+    @pytest.mark.asyncio
+    async def test_request_id_header_echoed(self, authenticated_client: AsyncClient):
+        """X-Request-ID should be echoed in response."""
+        request_id = "test-request-123"
+        response = await authenticated_client.get(
+            "/v1/status",
+            headers={"X-Request-ID": request_id},
+        )
+
+        assert response.headers.get("X-Request-ID") == request_id
+
+    @pytest.mark.asyncio
+    async def test_request_id_generated_if_missing(self, authenticated_client: AsyncClient):
+        """X-Request-ID should be generated if not provided."""
+        response = await authenticated_client.get("/v1/status")
+
+        request_id = response.headers.get("X-Request-ID")
+        assert request_id is not None
+        assert len(request_id) == 32  # 16 bytes hex
+
+
+class TestRateLimiting:
+    """Tests for rate limiting on authenticated endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_headers_present(self, authenticated_client: AsyncClient):
+        """Rate limit headers should be present on responses."""
+        response = await authenticated_client.get("/v1/status")
+
+        # Rate limit headers should be present
+        assert "X-RateLimit-Limit" in response.headers
+        assert "X-RateLimit-Remaining" in response.headers
+        assert "X-RateLimit-Reset" in response.headers
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exceeded_returns_429(self, test_client: AsyncClient, mock_redis):
+        """Rate limit exceeded should return 429."""
+        # Configure mock to return denied
+        mock_redis.evalsha = AsyncMock(return_value=[0, 100, 45])  # denied, 100 requests, 45s reset
+
+        # Make request with valid format key (will trigger rate limiting before auth)
+        response = await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": "cp_" + "a" * 32},
+        )
+
+        assert response.status_code == 429
+        assert "Rate limit exceeded" in response.json()["detail"]
+        assert response.headers.get("Retry-After") == "45"
