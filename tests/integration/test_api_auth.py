@@ -186,6 +186,117 @@ class TestSecurityHeaders:
         assert len(request_id) == 32  # 16 bytes hex
 
 
+class TestAuthFailedLogging:
+    """Tests for failed authentication logging."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_key_logs_failed_attempt(
+        self,
+        test_client: AsyncClient,
+        test_engine,
+    ):
+        """Invalid API key should log a failed authentication attempt."""
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        from sqlalchemy import select
+        from src.models import AuditLog, AuditAction
+
+        # Make request with invalid key
+        fake_key = "cp_" + "x" * 32
+        await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": fake_key},
+        )
+
+        # Check audit log for failed attempt
+        session_maker = async_sessionmaker(test_engine, class_=AsyncSession)
+        async with session_maker() as session:
+            stmt = select(AuditLog).where(AuditLog.action == AuditAction.AUTH_FAILED)
+            result = await session.execute(stmt)
+            logs = result.scalars().all()
+
+            # Should have at least one failed auth log
+            assert len(logs) >= 1
+            latest_log = logs[-1]
+            assert latest_log.details.get("reason") == "invalid"
+            assert latest_log.details.get("key_prefix") == "cp_xxxxx"
+
+    @pytest.mark.asyncio
+    async def test_revoked_key_logs_failed_attempt(
+        self,
+        test_client: AsyncClient,
+        test_api_key,
+        test_engine,
+    ):
+        """Revoked API key should log a failed authentication attempt."""
+        from datetime import datetime
+        from sqlalchemy import update, select
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        from src.models import APIKey, AuditLog, AuditAction
+
+        api_key_record, plain_key = test_api_key
+
+        # Revoke the key
+        session_maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+        async with session_maker() as session:
+            stmt = update(APIKey).where(APIKey.id == api_key_record.id).values(revoked_at=datetime.utcnow())
+            await session.execute(stmt)
+            await session.commit()
+
+        # Make request with revoked key
+        await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": plain_key},
+        )
+
+        # Check audit log for revoked attempt
+        async with session_maker() as session:
+            stmt = select(AuditLog).where(AuditLog.action == AuditAction.AUTH_FAILED)
+            result = await session.execute(stmt)
+            logs = result.scalars().all()
+
+            # Find the log with "revoked" reason
+            revoked_logs = [log for log in logs if log.details.get("reason") == "revoked"]
+            assert len(revoked_logs) >= 1
+
+
+class TestAPIKeyLastUsedUpdate:
+    """Tests for last_used_at timestamp update."""
+
+    @pytest.mark.asyncio
+    async def test_valid_key_updates_last_used_at(
+        self,
+        test_client: AsyncClient,
+        test_api_key,
+        test_engine,
+    ):
+        """Valid API key usage should update last_used_at timestamp."""
+        from datetime import datetime
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        from src.models import APIKey
+
+        api_key_record, plain_key = test_api_key
+        original_last_used = api_key_record.last_used_at
+
+        # Make a valid request
+        response = await test_client.get(
+            "/v1/status",
+            headers={"X-API-Key": plain_key},
+        )
+        assert response.status_code == 200
+
+        # Check that last_used_at was updated
+        session_maker = async_sessionmaker(test_engine, class_=AsyncSession)
+        async with session_maker() as session:
+            stmt = select(APIKey).where(APIKey.id == api_key_record.id)
+            result = await session.execute(stmt)
+            updated_key = result.scalar_one()
+
+            assert updated_key.last_used_at is not None
+            if original_last_used is not None:
+                assert updated_key.last_used_at >= original_last_used
+
+
 class TestRateLimiting:
     """Tests for rate limiting on authenticated endpoints."""
 

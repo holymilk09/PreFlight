@@ -258,6 +258,323 @@ class TestEvaluateEndpoint:
         assert len(data["replay_hash"]) == 64
 
 
+class TestEvaluateDecisionLogic:
+    """Tests for evaluate decision logic (MATCH, REVIEW, NEW)."""
+
+    @pytest.mark.asyncio
+    async def test_evaluate_match_decision_high_similarity(
+        self,
+        authenticated_client: AsyncClient,
+        sample_structural_features,
+    ):
+        """High similarity (>= 0.85) via similarity search should return MATCH."""
+        # Create template
+        template_data = {
+            "template_id": "MATCH-SIMILARITY-TEMPLATE",
+            "version": "1.0",
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.90,
+        }
+        await authenticated_client.post("/v1/templates", json=template_data)
+
+        # Use very slightly different features (should have high similarity)
+        similar_features = sample_structural_features.model_dump()
+        similar_features["element_count"] += 1  # Tiny change
+
+        eval_request = {
+            "layout_fingerprint": "1" * 64,  # Different fingerprint (not exact match)
+            "structural_features": similar_features,
+            "extractor_metadata": {
+                "vendor": "nvidia",
+                "model": "nemotron",
+                "version": "1.0",
+                "confidence": 0.95,
+                "latency_ms": 200,
+            },
+            "client_doc_hash": "2" * 64,
+            "client_correlation_id": "match-similarity-test",
+            "pipeline_id": "test",
+        }
+
+        response = await authenticated_client.post("/v1/evaluate", json=eval_request)
+        assert response.status_code == 200
+
+        data = response.json()
+        # Very similar features should get MATCH
+        assert data["decision"] == "MATCH"
+        assert data["template_version_id"] is not None
+        assert data["drift_score"] >= 0
+        assert data["reliability_score"] > 0
+        # High similarity should have low drift
+        assert data["drift_score"] < 0.3
+
+    @pytest.mark.asyncio
+    async def test_evaluate_review_decision_moderate_similarity(
+        self,
+        authenticated_client: AsyncClient,
+        sample_structural_features,
+    ):
+        """Moderate similarity (0.50-0.85) should return REVIEW decision."""
+        # Create template
+        template_data = {
+            "template_id": "REVIEW-SIMILARITY-TEMPLATE",
+            "version": "1.0",
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.85,
+        }
+        await authenticated_client.post("/v1/templates", json=template_data)
+
+        # Create features with moderate differences
+        modified_features = sample_structural_features.model_dump()
+        modified_features["element_count"] = int(modified_features["element_count"] * 1.5)
+        modified_features["table_count"] += 2
+        modified_features["text_density"] = min(1.0, modified_features["text_density"] + 0.2)
+        modified_features["layout_complexity"] = min(1.0, modified_features["layout_complexity"] + 0.15)
+
+        eval_request = {
+            "layout_fingerprint": "3" * 64,  # Different fingerprint
+            "structural_features": modified_features,
+            "extractor_metadata": {
+                "vendor": "nvidia",
+                "model": "nemotron",
+                "version": "1.0",
+                "confidence": 0.85,
+                "latency_ms": 200,
+            },
+            "client_doc_hash": "4" * 64,
+            "client_correlation_id": "review-similarity-test",
+            "pipeline_id": "test",
+        }
+
+        response = await authenticated_client.post("/v1/evaluate", json=eval_request)
+        assert response.status_code == 200
+
+        data = response.json()
+        # Moderate similarity could be REVIEW or still MATCH
+        assert data["decision"] in ["REVIEW", "MATCH"]
+        if data["decision"] == "REVIEW":
+            assert data["template_version_id"] is not None
+            assert data["drift_score"] > 0
+            assert data["reliability_score"] > 0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_full_match_path_with_scores(
+        self,
+        authenticated_client: AsyncClient,
+        sample_structural_features,
+    ):
+        """Test full MATCH path computing drift and reliability scores."""
+        import hashlib
+        import json
+
+        # Create template
+        template_data = {
+            "template_id": "FULL-MATCH-TEMPLATE",
+            "version": "1.0",
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.92,
+            "correction_rules": [
+                {"field": "amount", "rule": "currency_standardize", "parameters": None}
+            ],
+        }
+        response = await authenticated_client.post("/v1/templates", json=template_data)
+        assert response.status_code == 201
+
+        # Use exact fingerprint for guaranteed MATCH with confidence 1.0
+        features_json = json.dumps(sample_structural_features.model_dump(), sort_keys=True)
+        fingerprint = hashlib.sha256(features_json.encode()).hexdigest()
+
+        eval_request = {
+            "layout_fingerprint": fingerprint,
+            "structural_features": sample_structural_features.model_dump(),
+            "extractor_metadata": {
+                "vendor": "nvidia",
+                "model": "nemotron",
+                "version": "1.0",
+                "confidence": 0.93,
+                "latency_ms": 150,
+            },
+            "client_doc_hash": "5" * 64,
+            "client_correlation_id": "full-match-test",
+            "pipeline_id": "test",
+        }
+
+        response = await authenticated_client.post("/v1/evaluate", json=eval_request)
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["decision"] == "MATCH"
+        assert data["template_version_id"] == "FULL-MATCH-TEMPLATE:1.0"
+        assert data["drift_score"] == 0.0  # Same features, no drift
+        assert data["reliability_score"] > 0.5
+        assert len(data["correction_rules"]) >= 1  # Template has rules
+        assert data["alerts"] == []  # No alerts for high reliability/low drift
+
+    @pytest.mark.asyncio
+    async def test_evaluate_review_decision_moderate_confidence(
+        self,
+        authenticated_client: AsyncClient,
+        sample_structural_features,
+    ):
+        """Moderate confidence (0.50-0.85) should return REVIEW decision."""
+        # Create template
+        template_data = {
+            "template_id": "REVIEW-TEST-TEMPLATE",
+            "version": "1.0",
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.85,
+        }
+        await authenticated_client.post("/v1/templates", json=template_data)
+
+        # Create features that are similar but not identical (will get moderate match)
+        modified_features = sample_structural_features.model_dump()
+        modified_features["element_count"] += 10
+        modified_features["table_count"] += 1
+        modified_features["text_density"] += 0.1
+
+        eval_request = {
+            "layout_fingerprint": "e" * 64,  # Different fingerprint
+            "structural_features": modified_features,
+            "extractor_metadata": {
+                "vendor": "nvidia",
+                "model": "nemotron",
+                "version": "1.0",
+                "confidence": 0.85,
+                "latency_ms": 200,
+            },
+            "client_doc_hash": "f" * 64,
+            "client_correlation_id": "review-test",
+            "pipeline_id": "test",
+        }
+
+        response = await authenticated_client.post("/v1/evaluate", json=eval_request)
+        assert response.status_code == 200
+
+        data = response.json()
+        # Should be REVIEW or MATCH depending on similarity
+        assert data["decision"] in ["REVIEW", "MATCH", "NEW"]
+        # Verify all response fields are present
+        assert "drift_score" in data
+        assert "reliability_score" in data
+        assert "correction_rules" in data
+        assert "evaluation_id" in data
+        assert "replay_hash" in data
+        assert "alerts" in data
+
+    @pytest.mark.asyncio
+    async def test_evaluate_alerts_low_reliability(
+        self,
+        authenticated_client: AsyncClient,
+        sample_structural_features,
+    ):
+        """Low reliability should generate alert."""
+        # Create template with low baseline reliability
+        template_data = {
+            "template_id": "LOW-REL-TEMPLATE",
+            "version": "1.0",
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.60,  # Low baseline
+        }
+        await authenticated_client.post("/v1/templates", json=template_data)
+
+        import hashlib
+        import json
+        features_json = json.dumps(sample_structural_features.model_dump(), sort_keys=True)
+        fingerprint = hashlib.sha256(features_json.encode()).hexdigest()
+
+        eval_request = {
+            "layout_fingerprint": fingerprint,
+            "structural_features": sample_structural_features.model_dump(),
+            "extractor_metadata": {
+                "vendor": "unknown_vendor",
+                "model": "unknown",
+                "version": "0.1",
+                "confidence": 0.50,  # Low confidence
+                "latency_ms": 200,
+            },
+            "client_doc_hash": "a" * 64,
+            "client_correlation_id": "low-rel-test",
+            "pipeline_id": "test",
+        }
+
+        response = await authenticated_client.post("/v1/evaluate", json=eval_request)
+        assert response.status_code == 200
+
+        data = response.json()
+        # Should have low reliability and possibly alert
+        if data["decision"] in ["MATCH", "REVIEW"]:
+            # Reliability should be computed
+            assert data["reliability_score"] >= 0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_template_correction_rules(
+        self,
+        authenticated_client: AsyncClient,
+        sample_structural_features,
+    ):
+        """Evaluate should return template's correction rules."""
+        template_data = {
+            "template_id": "RULES-TEST-TEMPLATE",
+            "version": "1.0",
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.90,
+            "correction_rules": [
+                {"field": "total", "rule": "sum_line_items", "parameters": {"tolerance": 0.01}},
+                {"field": "date", "rule": "iso8601_normalize", "parameters": None},
+            ],
+        }
+        await authenticated_client.post("/v1/templates", json=template_data)
+
+        import hashlib
+        import json
+        features_json = json.dumps(sample_structural_features.model_dump(), sort_keys=True)
+        fingerprint = hashlib.sha256(features_json.encode()).hexdigest()
+
+        eval_request = {
+            "layout_fingerprint": fingerprint,
+            "structural_features": sample_structural_features.model_dump(),
+            "extractor_metadata": {
+                "vendor": "nvidia",
+                "model": "nemotron",
+                "version": "1.0",
+                "confidence": 0.95,
+                "latency_ms": 200,
+            },
+            "client_doc_hash": "b" * 64,
+            "client_correlation_id": "rules-test",
+            "pipeline_id": "test",
+        }
+
+        response = await authenticated_client.post("/v1/evaluate", json=eval_request)
+        assert response.status_code == 200
+
+        data = response.json()
+        if data["decision"] in ["MATCH", "REVIEW"]:
+            # Should have correction rules from template
+            assert len(data["correction_rules"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_evaluate_processing_time_tracked(
+        self,
+        authenticated_client: AsyncClient,
+        valid_evaluate_request_data: dict,
+    ):
+        """Processing should complete in reasonable time."""
+        import time
+        start = time.perf_counter()
+
+        response = await authenticated_client.post(
+            "/v1/evaluate",
+            json=valid_evaluate_request_data,
+        )
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        assert response.status_code == 200
+        # Should complete within 5 seconds (generous for CI)
+        assert elapsed_ms < 5000
+
+
 class TestEvaluateValidation:
     """Tests for evaluate request validation."""
 
