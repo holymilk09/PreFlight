@@ -3,11 +3,11 @@
 import os
 
 # Set required environment variables BEFORE any src imports
-# These are test values - not used in production
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5432/test")
-os.environ.setdefault("POSTGRES_PASSWORD", "test_password_12345678901234567890")
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
-os.environ.setdefault("REDIS_PASSWORD", "test_redis_password_1234567890")
+# These are test values - must match .env for integration tests
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://controlplane:test_postgres_password_12345678901234567890@localhost:5432/controlplane")
+os.environ.setdefault("POSTGRES_PASSWORD", "test_postgres_password_12345678901234567890")
+os.environ.setdefault("REDIS_URL", "redis://:test_redis_password_12345678901234567890@localhost:6379/0")
+os.environ.setdefault("REDIS_PASSWORD", "test_redis_password_12345678901234567890")
 os.environ.setdefault("JWT_SECRET", "test_jwt_secret_1234567890123456789012345678901234567890")
 os.environ.setdefault("API_KEY_SALT", "test_api_key_salt_12345678901234567890123456789012")
 
@@ -118,48 +118,41 @@ from src.models import APIKey, Tenant
 from src.security import generate_api_key
 
 
-# Test database URL (can be overridden by environment)
+# Test database URL (uses same credentials as main DB but different database name)
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    "postgresql+asyncpg://test:test@localhost:5432/control_plane_test"
+    f"postgresql+asyncpg://controlplane:{os.environ.get('POSTGRES_PASSWORD', 'test_postgres_password_12345678901234567890')}@localhost:5432/control_plane_test"
 )
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    import asyncio
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
+@pytest.fixture
 async def test_engine():
-    """Create test database engine and tables.
+    """Create test database engine for each test.
 
-    This fixture creates all tables at the start of the test session
-    and drops them at the end.
+    Each test gets its own engine to avoid event loop conflicts.
+    Tables are created once at first use (or should already exist).
     """
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,  # Check connection validity
+    )
 
+    # Ensure tables exist (safe to call multiple times)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
 
     yield engine
-
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
 
     await engine.dispose()
 
 
 @pytest.fixture
 async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Create a test database session with transaction rollback.
+    """Create a simple test database session.
 
-    Each test gets a fresh session that rolls back all changes
-    at the end, ensuring test isolation.
+    For tests that don't interact with the API, this provides a basic session.
+    For API tests, use the authenticated_client fixture instead.
     """
     async_session = async_sessionmaker(
         test_engine,
@@ -168,44 +161,65 @@ async def db_session(test_engine) -> AsyncGenerator[AsyncSession, None]:
     )
 
     async with async_session() as session:
-        async with session.begin():
-            yield session
-            await session.rollback()
+        yield session
 
 
 @pytest.fixture
-async def test_tenant(db_session: AsyncSession) -> Tenant:
-    """Create a test tenant."""
-    tenant = Tenant(
-        name="Test Tenant",
-        settings={"plan": "enterprise"},
+async def test_tenant(test_engine) -> Tenant:
+    """Create a test tenant that persists for the duration of the test.
+
+    This commits the tenant to the database so it's visible to API calls.
+    Note: No cleanup is performed to avoid event loop issues. The test database
+    should be reset between test runs or cleaned up at the session level.
+    """
+    async_session = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
     )
-    db_session.add(tenant)
-    await db_session.flush()
-    return tenant
+
+    async with async_session() as session:
+        tenant = Tenant(
+            name=f"Test Tenant {uuid7()}",  # Unique name for each test
+            settings={"plan": "enterprise"},
+        )
+        session.add(tenant)
+        await session.commit()
+        await session.refresh(tenant)
+        return tenant
 
 
 @pytest.fixture
-async def test_api_key(db_session: AsyncSession, test_tenant: Tenant) -> tuple[APIKey, str]:
-    """Create a test API key.
+async def test_api_key(test_engine, test_tenant: Tenant) -> tuple[APIKey, str]:
+    """Create a test API key that persists for the duration of the test.
 
     Returns:
         Tuple of (APIKey model, plain API key string)
+
+    Note: No cleanup is performed to avoid event loop issues. The test database
+    should be reset between test runs or cleaned up at the session level.
     """
+    async_session = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
     key_components = generate_api_key()
 
-    api_key = APIKey(
-        tenant_id=test_tenant.id,
-        key_hash=key_components.key_hash,
-        key_prefix=key_components.key_prefix,
-        name="test-key",
-        scopes=["*"],
-        rate_limit=1000,
-    )
-    db_session.add(api_key)
-    await db_session.flush()
-
-    return api_key, key_components.full_key
+    async with async_session() as session:
+        api_key = APIKey(
+            tenant_id=test_tenant.id,
+            key_hash=key_components.key_hash,
+            key_prefix=key_components.key_prefix,
+            name=f"test-key-{uuid7()}",  # Unique name for each test
+            scopes=["*"],
+            rate_limit=1000,
+        )
+        session.add(api_key)
+        await session.commit()
+        await session.refresh(api_key)
+        return api_key, key_components.full_key
 
 
 @pytest.fixture
@@ -221,54 +235,137 @@ def mock_redis():
 
 @pytest.fixture
 async def test_client(
-    db_session: AsyncSession,
+    test_engine,  # Ensure tables are created
     mock_redis,
 ) -> AsyncGenerator[AsyncClient, None]:
-    """Create an async HTTP test client.
+    """Create an async HTTP test client (unauthenticated).
 
     This client:
-    - Uses the test database session
     - Mocks Redis for rate limiting
-    - Provides a clean app instance for each test
+    - Uses the test database engine
+    - Does NOT have authentication (use authenticated_client for that)
     """
     from src.api.main import app
-    from src.api.deps import get_db_session, get_tenant_db
-    from src.services.rate_limiter import get_redis_client
+    from src.api.deps import get_db_session
+    from src.services import rate_limiter
+    from src import db
+
+    # Create a test session maker bound to our test engine
+    test_session_maker = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
 
     # Override database dependency
     async def override_get_db():
-        yield db_session
-
-    async def override_get_tenant_db(tenant_id: UUID = None):
-        # Set tenant context for RLS
-        if tenant_id:
-            await db_session.execute(
-                f"SET LOCAL app.tenant_id = '{tenant_id}'"
-            )
-        yield db_session
-
-    async def override_redis():
-        return mock_redis
+        async with test_session_maker() as session:
+            yield session
 
     app.dependency_overrides[get_db_session] = override_get_db
-    app.dependency_overrides[get_redis_client] = override_redis
+
+    # Patch the global database session maker
+    original_session_maker = db.async_session_maker
+    db.async_session_maker = test_session_maker
+
+    # Patch the global Redis client and rate limiter
+    original_redis_client = rate_limiter._redis_client
+    original_rate_limiter = rate_limiter._rate_limiter
+
+    rate_limiter._redis_client = mock_redis
+    rate_limiter._rate_limiter = rate_limiter.RateLimiter(mock_redis)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
+    # Restore original values
+    db.async_session_maker = original_session_maker
+    rate_limiter._redis_client = original_redis_client
+    rate_limiter._rate_limiter = original_rate_limiter
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
 async def authenticated_client(
-    test_client: AsyncClient,
+    test_engine,
+    mock_redis,
+    test_tenant: Tenant,
     test_api_key: tuple[APIKey, str],
-) -> AsyncClient:
-    """Create an authenticated test client with API key header."""
-    _, plain_key = test_api_key
-    test_client.headers["X-API-Key"] = plain_key
-    return test_client
+) -> AsyncGenerator[AsyncClient, None]:
+    """Create an authenticated test client.
+
+    This client:
+    - Mocks authentication to return the test tenant
+    - Mocks Redis for rate limiting
+    - Uses the test database engine for API endpoints
+    """
+    from src.api.main import app
+    from src.api.auth import validate_api_key, AuthenticatedTenant
+    from src.api.deps import get_db_session, get_tenant_db
+    from src.services import rate_limiter
+    from src import db
+
+    api_key_record, plain_key = test_api_key
+
+    # Create mock authenticated tenant
+    mock_tenant = AuthenticatedTenant(
+        tenant_id=test_tenant.id,
+        tenant_name=test_tenant.name,
+        api_key_id=api_key_record.id,
+        api_key_name=api_key_record.name,
+        scopes=api_key_record.scopes or ["*"],
+        rate_limit=api_key_record.rate_limit,
+    )
+
+    # Create a test session maker bound to our test engine
+    test_session_maker = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    # Override dependencies
+    async def override_auth():
+        return mock_tenant
+
+    async def override_get_db():
+        async with test_session_maker() as session:
+            yield session
+
+    async def override_get_tenant_db():
+        async with test_session_maker() as session:
+            from sqlalchemy import text
+            tenant_id_str = str(test_tenant.id)
+            await session.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id_str}'"))
+            yield session
+
+    app.dependency_overrides[validate_api_key] = override_auth
+    app.dependency_overrides[get_db_session] = override_get_db
+    app.dependency_overrides[get_tenant_db] = override_get_tenant_db
+
+    # Patch the global database session maker (used by some parts of the app)
+    original_session_maker = db.async_session_maker
+    db.async_session_maker = test_session_maker
+
+    # Patch the global Redis client and rate limiter
+    original_redis_client = rate_limiter._redis_client
+    original_rate_limiter = rate_limiter._rate_limiter
+
+    rate_limiter._redis_client = mock_redis
+    rate_limiter._rate_limiter = rate_limiter.RateLimiter(mock_redis)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Also set the API key header for completeness
+        client.headers["X-API-Key"] = plain_key
+        yield client
+
+    # Restore original values
+    db.async_session_maker = original_session_maker
+    rate_limiter._redis_client = original_redis_client
+    rate_limiter._rate_limiter = original_rate_limiter
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture

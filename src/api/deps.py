@@ -37,10 +37,11 @@ async def get_tenant_db(
     async with async_session_maker() as session:
         try:
             # Set tenant context for RLS policies
-            await session.execute(
-                text("SET LOCAL app.tenant_id = :tenant_id"),
-                {"tenant_id": str(tenant.tenant_id)},
-            )
+            # Note: SET LOCAL doesn't support parameterized queries, so we format
+            # the UUID directly. This is safe because tenant_id comes from our
+            # authentication system and is a validated UUID.
+            tenant_id_str = str(tenant.tenant_id)
+            await session.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id_str}'"))
             yield session
         finally:
             await session.close()
