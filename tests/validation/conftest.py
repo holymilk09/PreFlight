@@ -51,6 +51,33 @@ def funsd_test_samples(funsd_samples):
 
 
 @pytest.fixture(scope="session")
+def sroie_loader():
+    """Get SROIE dataset loader (downloads on first use)."""
+    try:
+        from tests.fixtures.datasets.sroie_loader import SROIELoader
+        return SROIELoader()
+    except ImportError as e:
+        pytest.skip(f"SROIE loader not available: {e}")
+
+
+@pytest.fixture(scope="session")
+def sroie_samples(sroie_loader):
+    """Load all SROIE samples (cached after first load).
+
+    Returns list of DocumentSample objects.
+    """
+    try:
+        samples = list(sroie_loader.load())
+        if not samples:
+            pytest.skip("SROIE dataset is empty")
+        return samples
+    except ImportError:
+        pytest.skip("datasets package not installed. Install with: pip install datasets")
+    except Exception as e:
+        pytest.skip(f"Failed to load SROIE: {e}")
+
+
+@pytest.fixture(scope="session")
 def sample_pairs(funsd_samples):
     """Generate pairs of samples for similarity testing.
 
@@ -65,5 +92,28 @@ def sample_pairs(funsd_samples):
     for i in range(min(50, len(funsd_samples) - 1)):
         j = random.randint(i + 1, len(funsd_samples) - 1)
         pairs.append((funsd_samples[i], funsd_samples[j], True))
+
+    return pairs
+
+
+@pytest.fixture(scope="session")
+def cross_dataset_pairs(funsd_samples, sroie_samples):
+    """Generate pairs across datasets for cross-type similarity testing.
+
+    Returns list of (funsd_sample, sroie_sample) tuples.
+    Forms should NOT match receipts (similarity < 0.50).
+    """
+    import random
+    random.seed(42)
+
+    pairs = []
+
+    # Cross-dataset pairs (forms vs receipts - should be dissimilar)
+    n_pairs = min(50, len(funsd_samples), len(sroie_samples))
+    funsd_subset = random.sample(funsd_samples, n_pairs)
+    sroie_subset = random.sample(sroie_samples, n_pairs)
+
+    for f_sample, s_sample in zip(funsd_subset, sroie_subset):
+        pairs.append((f_sample, s_sample))
 
     return pairs
