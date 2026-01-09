@@ -50,6 +50,11 @@ dev = [
     "factory-boy>=3.3.0",
     "faker>=22.0.0",
 ]
+validation = [
+    "datasets>=2.14.0",      # Hugging Face datasets (FUNSD, CORD, etc.)
+    "Pillow>=10.0.0",        # Image processing for document images
+    "matplotlib>=3.7.0",     # Plotting similarity distributions
+]
 
 [project.scripts]
 controlplane = "src.api.main:run"

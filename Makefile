@@ -58,14 +58,28 @@ dev: check-env
 	uvicorn src.api.main:app --reload --host 127.0.0.1 --port 8000
 
 
-## test: Run tests with coverage
+## test: Run tests with coverage (excludes validation tests)
 test:
 	@echo "$(BLUE)Running tests...$(RESET)"
-	pytest tests/ -v --cov=src --cov-report=term-missing
+	pytest tests/ -v --cov=src --cov-report=term-missing --ignore=tests/validation/
 
 ## test-fast: Run tests without coverage (faster)
 test-fast:
-	pytest tests/ -v -x
+	pytest tests/ -v -x --ignore=tests/validation/
+
+## test-validation: Run validation tests with real datasets (requires datasets package)
+test-validation:
+	@echo "$(BLUE)Running validation tests with real document datasets...$(RESET)"
+	@echo "$(YELLOW)Note: First run will download FUNSD dataset (~16MB)$(RESET)"
+	pip install -q datasets pillow matplotlib
+	pytest tests/validation/ -v -s
+
+## calibrate: Generate threshold calibration report from real data
+calibrate:
+	@echo "$(BLUE)Generating threshold calibration report...$(RESET)"
+	pip install -q datasets
+	pytest tests/validation/test_threshold_calibration.py -v -s
+	@test -f threshold_calibration_report.json && echo "$(GREEN)Report saved to threshold_calibration_report.json$(RESET)"
 
 ## lint: Run linting checks
 lint:
