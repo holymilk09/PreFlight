@@ -93,25 +93,29 @@ def compute_text_density(
 ) -> float:
     """Compute text density as ratio of text area to page area.
 
+    Note: BoundingBox coordinates are normalized (0-1 range), so we
+    calculate density directly from the normalized values.
+
     Args:
-        bboxes: List of bounding boxes for text elements
-        page_width: Page width in pixels
-        page_height: Page height in pixels
+        bboxes: List of bounding boxes for text elements (normalized 0-1)
+        page_width: Page width in pixels (used only if bboxes are not normalized)
+        page_height: Page height in pixels (used only if bboxes are not normalized)
 
     Returns:
         Float between 0.0 and 1.0 representing text density.
     """
-    if page_width <= 0 or page_height <= 0:
+    if not bboxes:
         return 0.0
 
-    page_area = page_width * page_height
+    # BoundingBox uses normalized coordinates (0-1), so width * height
+    # gives us the fraction of page area covered by each box
     text_area = sum(
         (bbox.width or 0) * (bbox.height or 0)
         for bbox in bboxes
     )
 
     # Cap at 1.0 (overlapping boxes can exceed page area)
-    return min(text_area / page_area, 1.0)
+    return min(text_area, 1.0)
 
 
 def compute_layout_complexity(

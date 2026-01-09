@@ -49,6 +49,7 @@ htmlcov/
 coverage_html/
 .tox/
 .nox/
+threshold_calibration_report.json
 
 # mypy
 .mypy_cache/

@@ -164,63 +164,56 @@ class FUNSDLoader(DatasetLoader):
 
         FUNSD stores bboxes in different formats depending on the
         Hugging Face dataset version. This handles both formats.
+        Coordinates are normalized to 0-1 range.
 
         Args:
             item: Raw item from dataset
 
         Returns:
-            List of BoundingBox objects.
+            List of BoundingBox objects with normalized coordinates.
         """
-        bboxes = []
+        raw_bboxes = []
 
         # Format 1: item has 'bboxes' key directly
         if "bboxes" in item:
             for bbox in item["bboxes"]:
                 if len(bbox) >= 4:
-                    bboxes.append(BoundingBox(
-                        x=bbox[0],
-                        y=bbox[1],
-                        width=bbox[2] - bbox[0],
-                        height=bbox[3] - bbox[1],
-                    ))
-            return bboxes
+                    raw_bboxes.append(bbox)
 
         # Format 2: item has 'ner_tags' with nested structure
-        if "ner_tags" in item and "boxes" in item:
+        elif "ner_tags" in item and "boxes" in item:
             for bbox in item["boxes"]:
                 if len(bbox) >= 4:
-                    bboxes.append(BoundingBox(
-                        x=bbox[0],
-                        y=bbox[1],
-                        width=bbox[2] - bbox[0],
-                        height=bbox[3] - bbox[1],
-                    ))
-            return bboxes
+                    raw_bboxes.append(bbox)
 
         # Format 3: Nested 'form' structure (original FUNSD format)
-        if "form" in item:
+        elif "form" in item:
             for block in item["form"]:
                 if "box" in block:
                     bbox = block["box"]
                     if len(bbox) >= 4:
-                        bboxes.append(BoundingBox(
-                            x=bbox[0],
-                            y=bbox[1],
-                            width=bbox[2] - bbox[0],
-                            height=bbox[3] - bbox[1],
-                        ))
-                # Also get word-level boxes if available
-                if "words" in block:
-                    for word in block["words"]:
-                        if "box" in word:
-                            bbox = word["box"]
-                            if len(bbox) >= 4:
-                                bboxes.append(BoundingBox(
-                                    x=bbox[0],
-                                    y=bbox[1],
-                                    width=bbox[2] - bbox[0],
-                                    height=bbox[3] - bbox[1],
-                                ))
+                        raw_bboxes.append(bbox)
+
+        # Normalize coordinates to 0-1 range
+        bboxes = []
+        for i, bbox in enumerate(raw_bboxes):
+            x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+
+            # Normalize using page dimensions
+            norm_x = max(0.0, min(1.0, x1 / self.DEFAULT_PAGE_WIDTH))
+            norm_y = max(0.0, min(1.0, y1 / self.DEFAULT_PAGE_HEIGHT))
+            norm_w = max(0.0, min(1.0, (x2 - x1) / self.DEFAULT_PAGE_WIDTH))
+            norm_h = max(0.0, min(1.0, (y2 - y1) / self.DEFAULT_PAGE_HEIGHT))
+
+            bboxes.append(BoundingBox(
+                x=norm_x,
+                y=norm_y,
+                width=norm_w,
+                height=norm_h,
+                element_type="text",  # FUNSD is all text elements
+                confidence=0.95,  # Assumed high confidence for ground truth
+                reading_order=i,
+            ))
 
         return bboxes
 
