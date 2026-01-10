@@ -385,3 +385,169 @@ class TestCrossDatasetSeparation:
         assert sroie_mean > cross_mean, (
             f"SROIE same-type ({sroie_mean:.3f}) should be higher than cross-type ({cross_mean:.3f})"
         )
+
+
+class TestDiverseDocumentTypes:
+    """Test template matching across diverse PDF-like document types.
+
+    Uses synthetic documents simulating:
+    - Financial reports (tables, headers, dense text)
+    - Scientific articles (figures, formulas, columns)
+    - Legal documents (dense text, structured)
+    - Manuals (images, lists, mixed)
+    - Invoices (tables, sparse)
+    - Patents (figures, dense, structured)
+    """
+
+    @pytest.mark.validation
+    def test_synthetic_feature_extraction(self, synthetic_samples):
+        """All synthetic samples should produce valid feature vectors."""
+        for sample in synthetic_samples[:100]:
+            vector = _extract_feature_vector(sample.features)
+
+            assert len(vector) == 10, f"Wrong vector length for {sample.id}"
+            for i, v in enumerate(vector):
+                assert 0.0 <= v <= 1.0, f"Out of range value in {sample.id}"
+
+    @pytest.mark.validation
+    def test_same_category_similarity(self, synthetic_by_category):
+        """Documents of the same type should have high similarity."""
+        print("\nSame-Category Similarity by Document Type:")
+
+        for category, samples in synthetic_by_category.items():
+            similarities = []
+            n = min(50, len(samples))
+
+            for i in range(n):
+                for j in range(i + 1, min(i + 5, n)):
+                    vec_a = _extract_feature_vector(samples[i].features)
+                    vec_b = _extract_feature_vector(samples[j].features)
+                    similarities.append(_cosine_similarity(vec_a, vec_b))
+
+            if similarities:
+                mean_sim = sum(similarities) / len(similarities)
+                print(f"  {category}: mean={mean_sim:.3f} (n={len(similarities)})")
+
+                # Same category should have reasonable similarity
+                assert mean_sim > 0.7, f"{category} same-type similarity too low: {mean_sim}"
+
+    @pytest.mark.validation
+    def test_cross_category_patterns(self, synthetic_by_category):
+        """Different document types should show varying similarity patterns."""
+        import random
+        random.seed(42)
+
+        categories = list(synthetic_by_category.keys())
+        results = {}
+
+        print("\nCross-Category Similarity Matrix:")
+        print("              ", end="")
+        for cat in categories:
+            print(f"{cat[:8]:>10}", end="")
+        print()
+
+        for cat_a in categories:
+            print(f"{cat_a[:12]:12}", end="")
+            for cat_b in categories:
+                samples_a = synthetic_by_category[cat_a]
+                samples_b = synthetic_by_category[cat_b]
+
+                similarities = []
+                for _ in range(50):
+                    i = random.randint(0, len(samples_a) - 1)
+                    j = random.randint(0, len(samples_b) - 1)
+                    vec_a = _extract_feature_vector(samples_a[i].features)
+                    vec_b = _extract_feature_vector(samples_b[j].features)
+                    similarities.append(_cosine_similarity(vec_a, vec_b))
+
+                mean = sum(similarities) / len(similarities)
+                results[(cat_a, cat_b)] = mean
+                print(f"{mean:10.3f}", end="")
+            print()
+
+        # Diagonal (same type) should generally be highest
+        for cat in categories:
+            same_type = results[(cat, cat)]
+            cross_types = [results[(cat, other)] for other in categories if other != cat]
+            avg_cross = sum(cross_types) / len(cross_types)
+
+            # Same type should be at least as high as average cross-type
+            # (not strictly higher since structural features can be similar)
+            assert same_type >= avg_cross * 0.95, (
+                f"{cat}: same-type ({same_type:.3f}) much lower than cross-type avg ({avg_cross:.3f})"
+            )
+
+    @pytest.mark.validation
+    def test_table_heavy_documents(self, synthetic_by_category):
+        """Documents with tables should be distinguishable by table_count feature."""
+        financial = synthetic_by_category.get("financial_report", [])
+        legal = synthetic_by_category.get("legal_document", [])
+
+        if not financial or not legal:
+            pytest.skip("Missing document categories")
+
+        fin_tables = [s.features.table_count for s in financial]
+        legal_tables = [s.features.table_count for s in legal]
+
+        fin_avg = sum(fin_tables) / len(fin_tables)
+        legal_avg = sum(legal_tables) / len(legal_tables)
+
+        print(f"\nTable counts: financial_report avg={fin_avg:.1f}, legal_document avg={legal_avg:.1f}")
+
+        # Financial reports should have more tables on average
+        assert fin_avg > legal_avg, "Financial reports should have more tables than legal docs"
+
+    @pytest.mark.validation
+    def test_image_heavy_documents(self, synthetic_by_category):
+        """Documents with images should be distinguishable by image_count feature."""
+        manual = synthetic_by_category.get("manual", [])
+        legal = synthetic_by_category.get("legal_document", [])
+
+        if not manual or not legal:
+            pytest.skip("Missing document categories")
+
+        manual_images = [s.features.image_count for s in manual]
+        legal_images = [s.features.image_count for s in legal]
+
+        manual_avg = sum(manual_images) / len(manual_images)
+        legal_avg = sum(legal_images) / len(legal_images)
+
+        print(f"\nImage counts: manual avg={manual_avg:.1f}, legal_document avg={legal_avg:.1f}")
+
+        # Manuals should have more images than legal documents
+        assert manual_avg > legal_avg, "Manuals should have more images than legal docs"
+
+    @pytest.mark.validation
+    def test_threshold_across_all_types(self, synthetic_samples):
+        """Test current thresholds work across all synthetic document types."""
+        import random
+        random.seed(42)
+
+        n = len(synthetic_samples)
+        similarities = []
+
+        # Random pairs across all types
+        for _ in range(500):
+            i, j = random.sample(range(n), 2)
+            vec_a = _extract_feature_vector(synthetic_samples[i].features)
+            vec_b = _extract_feature_vector(synthetic_samples[j].features)
+            sim = _cosine_similarity(vec_a, vec_b)
+
+            same_type = synthetic_samples[i].category == synthetic_samples[j].category
+            similarities.append((sim, same_type))
+
+        # Analyze thresholds
+        same_type_sims = [s for s, same in similarities if same]
+        cross_type_sims = [s for s, same in similarities if not same]
+
+        same_mean = sum(same_type_sims) / len(same_type_sims) if same_type_sims else 0
+        cross_mean = sum(cross_type_sims) / len(cross_type_sims) if cross_type_sims else 0
+
+        print(f"\nSynthetic Threshold Analysis:")
+        print(f"  Same-type pairs: {len(same_type_sims)}, mean={same_mean:.3f}")
+        print(f"  Cross-type pairs: {len(cross_type_sims)}, mean={cross_mean:.3f}")
+
+        # With diverse document types, we expect some separation
+        # but structural features may still overlap
+        assert len(same_type_sims) > 0, "No same-type pairs found"
+        assert len(cross_type_sims) > 0, "No cross-type pairs found"

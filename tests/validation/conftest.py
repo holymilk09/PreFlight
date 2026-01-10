@@ -117,3 +117,49 @@ def cross_dataset_pairs(funsd_samples, sroie_samples):
         pairs.append((f_sample, s_sample))
 
     return pairs
+
+
+# ============================================================================
+# Synthetic Document Fixtures (for diverse document type testing)
+# ============================================================================
+
+@pytest.fixture(scope="session")
+def synthetic_generator():
+    """Get synthetic document generator."""
+    from tests.fixtures.datasets.synthetic_documents import SyntheticDocumentGenerator
+    return SyntheticDocumentGenerator(seed=42)
+
+
+@pytest.fixture(scope="session")
+def synthetic_samples(synthetic_generator):
+    """Generate synthetic samples across all document types.
+
+    Returns 600 samples (100 per type): financial_report, scientific_article,
+    legal_document, manual, invoice, patent.
+    """
+    return list(synthetic_generator.generate_mixed(count=600))
+
+
+@pytest.fixture(scope="session")
+def synthetic_by_category(synthetic_samples):
+    """Group synthetic samples by category.
+
+    Returns dict mapping category name to list of samples.
+    """
+    from collections import defaultdict
+    by_cat = defaultdict(list)
+    for sample in synthetic_samples:
+        by_cat[sample.category].append(sample)
+    return dict(by_cat)
+
+
+@pytest.fixture(scope="session")
+def synthetic_financial(synthetic_generator):
+    """Generate synthetic financial report samples."""
+    return list(synthetic_generator.generate("financial_report", count=100))
+
+
+@pytest.fixture(scope="session")
+def synthetic_invoices(synthetic_generator):
+    """Generate synthetic invoice samples."""
+    return list(synthetic_generator.generate("invoice", count=100))
