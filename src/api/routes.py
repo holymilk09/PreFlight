@@ -11,6 +11,7 @@ from uuid_extensions import uuid7
 from src.api.auth import CurrentTenant
 from src.api.deps import TenantDbSession
 from src.audit import log_evaluation_requested, log_template_created
+from src.metrics import record_evaluation
 from src.models import (
     Decision,
     DetailedHealthResponse,
@@ -145,6 +146,14 @@ async def evaluate(
         processing_time_ms=processing_time_ms,
         ip_address=request.client.host if request.client else None,
         request_id=UUID(request.state.request_id) if hasattr(request.state, "request_id") else None,
+    )
+
+    # Record metrics
+    record_evaluation(
+        decision=decision.value,
+        drift_score=drift_score,
+        reliability_score=reliability_score,
+        template_matched=matched_template is not None,
     )
 
     # Build alerts

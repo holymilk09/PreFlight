@@ -1,6 +1,7 @@
 """Document Extraction Control Plane - FastAPI Application."""
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -10,6 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.config import settings
+from src.metrics import (
+    REQUEST_COUNT,
+    REQUEST_LATENCY,
+    get_metrics,
+    get_metrics_content_type,
+    record_rate_limit_hit,
+)
 from src.db import async_session_maker, close_db, init_db
 from src.models import AuditAction, AuditLog
 from src.security import generate_request_id, hash_api_key
@@ -140,8 +148,8 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
     - Unauthenticated requests: Use IP-based limit from config
     - Skip rate limiting for health endpoints
     """
-    # Skip rate limiting for health endpoints
-    if request.url.path in ("/health", "/"):
+    # Skip rate limiting for health and metrics endpoints
+    if request.url.path in ("/health", "/", "/metrics"):
         return await call_next(request)
 
     # Get client identifier and limit
@@ -177,7 +185,10 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
         response.headers["X-RateLimit-Reset"] = str(result.reset_after_seconds)
         return response
     else:
-        # Rate limit exceeded - log asynchronously (don't block response)
+        # Rate limit exceeded - record metrics
+        record_rate_limit_hit("key" if api_key else "ip")
+
+        # Log asynchronously (don't block response)
         asyncio.create_task(
             _log_rate_limit_exceeded(
                 identifier=identifier,
@@ -201,6 +212,47 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
                 "Retry-After": str(result.reset_after_seconds),
             },
         )
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next: Any) -> Response:
+    """Record Prometheus metrics for all requests.
+
+    Tracks request count by endpoint/method/status and latency by endpoint.
+    Excludes /metrics endpoint from its own metrics to avoid recursion.
+    """
+    # Skip metrics for the metrics endpoint itself
+    if request.url.path == "/metrics":
+        return await call_next(request)
+
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    duration = time.perf_counter() - start_time
+
+    # Normalize endpoint path for metrics (avoid high cardinality)
+    endpoint = _normalize_endpoint(request.url.path)
+
+    REQUEST_COUNT.labels(
+        endpoint=endpoint,
+        method=request.method,
+        status=response.status_code,
+    ).inc()
+
+    REQUEST_LATENCY.labels(endpoint=endpoint).observe(duration)
+
+    return response
+
+
+def _normalize_endpoint(path: str) -> str:
+    """Normalize endpoint path to avoid high cardinality in metrics.
+
+    Replaces UUID path parameters with placeholders.
+    """
+    import re
+
+    # Replace UUIDs with placeholder
+    uuid_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    return re.sub(uuid_pattern, "{id}", path, flags=re.IGNORECASE)
 
 
 # CORS middleware - only add if origins are configured
@@ -262,6 +314,24 @@ async def root() -> dict[str, str]:
         "version": "0.1.0",
         "docs": "/docs" if settings.enable_docs else "disabled",
     }
+
+
+# -----------------------------------------------------------------------------
+# Metrics Endpoint (Public)
+# -----------------------------------------------------------------------------
+
+
+@app.get("/metrics", tags=["Observability"], include_in_schema=False)
+async def metrics() -> Response:
+    """Prometheus metrics endpoint.
+
+    This endpoint is public and does not require authentication.
+    Returns metrics in Prometheus text format for scraping.
+    """
+    return Response(
+        content=get_metrics(),
+        media_type=get_metrics_content_type(),
+    )
 
 
 # -----------------------------------------------------------------------------
