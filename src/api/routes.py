@@ -366,8 +366,9 @@ async def get_status(
         await db.execute(text("SELECT 1"))
         latency = (time.perf_counter() - start) * 1000
         services["database"] = ServiceStatus(healthy=True, latency_ms=round(latency, 2))
-    except Exception as e:
-        services["database"] = ServiceStatus(healthy=False, error=str(e)[:100])
+    except Exception:
+        # Don't expose internal error details - log them separately
+        services["database"] = ServiceStatus(healthy=False, error="Connection failed")
 
     # Check Redis
     try:
@@ -376,8 +377,9 @@ async def get_status(
         await redis.ping()
         latency = (time.perf_counter() - start) * 1000
         services["redis"] = ServiceStatus(healthy=True, latency_ms=round(latency, 2))
-    except Exception as e:
-        services["redis"] = ServiceStatus(healthy=False, error=str(e)[:100])
+    except Exception:
+        # Don't expose internal error details - log them separately
+        services["redis"] = ServiceStatus(healthy=False, error="Connection failed")
 
     # Overall status
     all_healthy = all(s.healthy for s in services.values())

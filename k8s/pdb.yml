@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: preflight-api
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/component: pdb
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: preflight-api

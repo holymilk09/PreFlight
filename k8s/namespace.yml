@@ -1,0 +1,20 @@
+---
+# Staging namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: preflight-staging
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/component: namespace
+    environment: staging
+---
+# Production namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: preflight-prod
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/component: namespace
+    environment: production

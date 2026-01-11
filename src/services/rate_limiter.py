@@ -4,9 +4,12 @@ import time
 from dataclasses import dataclass
 
 import redis.asyncio as aioredis
-from redis.exceptions import NoScriptError
+import structlog
+from redis.exceptions import NoScriptError, RedisError
 
 from src.config import settings
+
+logger = structlog.get_logger()
 
 
 @dataclass
@@ -125,6 +128,15 @@ class RateLimiter:
 _redis_client: aioredis.Redis | None = None
 _rate_limiter: RateLimiter | None = None
 
+# Circuit breaker state
+_circuit_breaker_failures: int = 0
+_circuit_breaker_last_failure: float = 0.0
+_circuit_breaker_open: bool = False
+
+# Circuit breaker configuration
+CIRCUIT_BREAKER_THRESHOLD = 5  # Number of failures to open circuit
+CIRCUIT_BREAKER_RESET_SECONDS = 30  # Time before attempting to close circuit
+
 
 async def get_redis_client() -> aioredis.Redis:
     """Get or create Redis client with connection pooling."""
@@ -160,12 +172,53 @@ async def _get_rate_limiter() -> RateLimiter:
     return _rate_limiter
 
 
+def _record_failure() -> None:
+    """Record a rate limiting failure for circuit breaker."""
+    global _circuit_breaker_failures, _circuit_breaker_last_failure, _circuit_breaker_open
+    _circuit_breaker_failures += 1
+    _circuit_breaker_last_failure = time.time()
+    if _circuit_breaker_failures >= CIRCUIT_BREAKER_THRESHOLD:
+        _circuit_breaker_open = True
+        logger.warning(
+            "rate_limiter_circuit_breaker_open",
+            failures=_circuit_breaker_failures,
+            threshold=CIRCUIT_BREAKER_THRESHOLD,
+        )
+
+
+def _record_success() -> None:
+    """Record a rate limiting success for circuit breaker."""
+    global _circuit_breaker_failures, _circuit_breaker_open
+    if _circuit_breaker_failures > 0 or _circuit_breaker_open:
+        _circuit_breaker_failures = 0
+        _circuit_breaker_open = False
+        logger.info("rate_limiter_circuit_breaker_closed")
+
+
+def _should_attempt_rate_limit() -> bool:
+    """Check if we should attempt rate limiting based on circuit breaker state."""
+    global _circuit_breaker_open, _circuit_breaker_last_failure
+
+    if not _circuit_breaker_open:
+        return True
+
+    # Check if enough time has passed to try again (half-open state)
+    if time.time() - _circuit_breaker_last_failure > CIRCUIT_BREAKER_RESET_SECONDS:
+        logger.info("rate_limiter_circuit_breaker_half_open", attempting_reset=True)
+        return True
+
+    return False
+
+
 async def check_rate_limit(
     identifier: str,
     limit: int,
     prefix: str = "ratelimit",
 ) -> RateLimitResult:
     """Check rate limit for an identifier.
+
+    Uses a circuit breaker pattern to fail-open when Redis is unavailable.
+    This prevents Redis failures from blocking all requests.
 
     Args:
         identifier: Unique ID (api_key_id, IP address, etc.)
@@ -175,6 +228,38 @@ async def check_rate_limit(
     Returns:
         RateLimitResult with status
     """
-    limiter = await _get_rate_limiter()
-    key = f"{prefix}:{identifier}"
-    return await limiter.check(key, limit)
+    # Check circuit breaker state
+    if not _should_attempt_rate_limit():
+        # Circuit is open - fail-open (allow request)
+        logger.debug(
+            "rate_limit_circuit_breaker_bypass",
+            identifier=identifier[:8] + "..." if len(identifier) > 8 else identifier,
+        )
+        return RateLimitResult(
+            allowed=True,
+            limit=limit,
+            remaining=limit,  # Unknown, assume full
+            reset_after_seconds=60,
+        )
+
+    try:
+        limiter = await _get_rate_limiter()
+        key = f"{prefix}:{identifier}"
+        result = await limiter.check(key, limit)
+        _record_success()
+        return result
+
+    except (RedisError, ConnectionError, TimeoutError, OSError) as e:
+        # Redis unavailable - fail-open (allow request)
+        _record_failure()
+        logger.warning(
+            "rate_limit_redis_unavailable",
+            error_type=type(e).__name__,
+            identifier=identifier[:8] + "..." if len(identifier) > 8 else identifier,
+        )
+        return RateLimitResult(
+            allowed=True,
+            limit=limit,
+            remaining=limit,  # Unknown, assume full
+            reset_after_seconds=60,
+        )

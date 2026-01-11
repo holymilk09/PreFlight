@@ -1,0 +1,101 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: preflight-api
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: preflight-api
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow traffic from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+
+    # Allow traffic from Prometheus for metrics scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8000
+
+    # Allow traffic from within the same namespace (for health checks)
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8000
+
+  egress:
+    # Allow DNS
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow PostgreSQL (adjust namespace/labels as needed)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+
+    # Allow Redis (adjust namespace/labels as needed)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+
+    # Allow Temporal (adjust namespace/labels as needed)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: temporal
+      ports:
+        - protocol: TCP
+          port: 7233
+
+---
+# Default deny policy for the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

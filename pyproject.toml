@@ -52,6 +52,9 @@ dev = [
     "pre-commit>=3.6.0",
     "factory-boy>=3.3.0",
     "faker>=22.0.0",
+    # Security scanning
+    "bandit>=1.7.0",
+    "pip-audit>=2.6.0",
 ]
 validation = [
     "datasets>=2.14.0",      # Hugging Face datasets (FUNSD, CORD, etc.)

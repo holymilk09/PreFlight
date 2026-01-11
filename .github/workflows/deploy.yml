@@ -1,0 +1,141 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      image_tag:
+        description: 'Image tag to deploy (e.g., sha-abc123 or v1.0.0)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubeconfig
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          echo "${KUBECONFIG_DATA}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Set namespace
+        id: namespace
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [ "${ENVIRONMENT}" = "production" ]; then
+            echo "namespace=preflight-prod" >> $GITHUB_OUTPUT
+          else
+            echo "namespace=preflight-staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update deployment image
+        env:
+          NAMESPACE: ${{ steps.namespace.outputs.namespace }}
+          FULL_IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}
+        run: |
+          kubectl set image deployment/preflight-api \
+            preflight-api="${FULL_IMAGE}" \
+            -n "${NAMESPACE}"
+
+      - name: Wait for rollout
+        env:
+          NAMESPACE: ${{ steps.namespace.outputs.namespace }}
+        run: |
+          kubectl rollout status deployment/preflight-api \
+            -n "${NAMESPACE}" \
+            --timeout=300s
+
+      - name: Verify deployment
+        env:
+          NAMESPACE: ${{ steps.namespace.outputs.namespace }}
+        run: |
+          kubectl get pods -n "${NAMESPACE}" -l app=preflight-api
+          kubectl get deployment preflight-api -n "${NAMESPACE}"
+
+      - name: Run health check
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [ "${ENVIRONMENT}" = "production" ]; then
+            HEALTH_URL="https://api.preflight.example.com/health"
+          else
+            HEALTH_URL="https://api-staging.preflight.example.com/health"
+          fi
+
+          for i in 1 2 3 4 5; do
+            if curl -sf "${HEALTH_URL}" > /dev/null; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+  notify:
+    name: Notify
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Send notification
+        env:
+          DEPLOY_STATUS: ${{ needs.deploy.result }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          ACTOR: ${{ github.actor }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ "${DEPLOY_STATUS}" = "success" ]; then
+            COLOR="good"
+            TEXT="Deployment to ${ENVIRONMENT} succeeded"
+          else
+            COLOR="danger"
+            TEXT="Deployment to ${ENVIRONMENT} failed"
+          fi
+
+          if [ -n "${SLACK_WEBHOOK}" ]; then
+            curl -X POST "${SLACK_WEBHOOK}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"attachments\": [{
+                  \"color\": \"${COLOR}\",
+                  \"title\": \"PreFlight Deployment\",
+                  \"text\": \"${TEXT}\",
+                  \"fields\": [
+                    {\"title\": \"Environment\", \"value\": \"${ENVIRONMENT}\", \"short\": true},
+                    {\"title\": \"Image\", \"value\": \"${IMAGE_TAG}\", \"short\": true},
+                    {\"title\": \"Deployed by\", \"value\": \"${ACTOR}\", \"short\": true}
+                  ]
+                }]
+              }"
+          else
+            echo "Slack webhook not configured, skipping notification"
+          fi
