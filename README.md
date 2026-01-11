@@ -1,199 +1,184 @@
-# Document Extraction Control Plane
+# PreFlight
 
-Metadata-only governance for enterprise document extraction pipelines.
+**Know when your OCR is drifting before your customers complain.**
 
-## What We Do
+PreFlight is a metadata-only governance layer for document extraction pipelines. We detect template drift and predict extraction reliability - without ever seeing your documents.
 
-We govern document extraction systems **without touching documents**:
+## The Problem
+
+You're running document extraction with AWS Textract, Azure Doc Intelligence, or similar. Things work great... until they don't:
+
+- A vendor changes their invoice format
+- OCR accuracy silently degrades
+- New document types slip through
+- You find out from customer complaints
+
+## The Solution
+
+PreFlight monitors your extraction pipeline by analyzing **structural metadata only**:
+
+```python
+# After your normal Textract/Azure extraction:
+result = preflight.evaluate(
+    structural_features=extract_features(textract_response),
+    extractor_metadata={"vendor": "aws", "model": "textract", ...}
+)
+
+if result.decision == "REVIEW":
+    # Flag for human review - drift detected
+    print(f"Drift score: {result.drift_score}")
+```
+
+## What We See vs. Don't See
 
 | We Receive | We Never See |
 |------------|--------------|
-| Layout fingerprints | Document images/PDFs |
-| Structural features | Extracted text |
-| Bounding box coordinates | Field values |
-| Extractor metadata | PII/PHI |
-| Confidence scores | Any content |
+| Bounding box coordinates | Document images/PDFs |
+| Element counts (tables, text blocks) | Extracted text or values |
+| Layout complexity metrics | PII, PHI, or any content |
+| Extractor confidence scores | Your documents |
 
-| We Return |
-|-----------|
-| Template identity |
-| Drift risk scores |
-| Reliability scores |
-| Correction rules |
-| Audit certificates |
+**Privacy-first by design**: We can't leak what we never have.
 
 ## Quick Start
 
-### Prerequisites
-
-- Python 3.11+
-- Docker & Docker Compose
-- Make
-
-### Setup
+### 1. Install
 
 ```bash
-# Clone and setup
-git clone <repo>
-cd control-plane
-
-# Initial setup (creates venv, installs deps, copies .env)
-make setup
-
-# IMPORTANT: Generate secure secrets
-# Edit .env and replace all GENERATE_* values with:
-openssl rand -hex 32
-
-# Start infrastructure
-make up
-
-# Run database migrations
-make migrate
-
-# Start API server
-make dev
+pip install httpx  # We use HTTP, no SDK yet
 ```
 
-### Verify Installation
+### 2. Send Metadata After Extraction
+
+```python
+import httpx
+
+# Your normal extraction
+textract_response = textract.analyze_document(...)
+
+# Extract structural features (bounding boxes, counts)
+features = {
+    "element_count": len(blocks),
+    "table_count": len(tables),
+    "text_block_count": len(text_blocks),
+    "bounding_boxes": [{"x": 0.1, "y": 0.2, ...}, ...]
+    # ... see docs for full schema
+}
+
+# Evaluate with PreFlight
+result = httpx.post(
+    "https://api.preflight.dev/v1/evaluate",
+    headers={"X-API-Key": "cp_your_key"},
+    json={
+        "structural_features": features,
+        "layout_fingerprint": compute_hash(features),
+        "extractor_metadata": {"vendor": "aws", "model": "textract", ...},
+        "client_doc_hash": "sha256_of_your_doc",
+        "client_correlation_id": "invoice-123",
+        "pipeline_id": "invoices-prod"
+    }
+).json()
+
+print(result["decision"])       # MATCH, REVIEW, NEW, or REJECT
+print(result["drift_score"])    # 0.0 to 1.0
+print(result["reliability_score"])  # 0.0 to 1.0
+```
+
+### 3. Handle the Decision
+
+| Decision | Meaning | Action |
+|----------|---------|--------|
+| `MATCH` | High confidence (>=85%) | Auto-process |
+| `REVIEW` | Medium confidence (50-85%) | Human review |
+| `NEW` | Unknown template (<50%) | Register or investigate |
+| `REJECT` | Anomaly detected | Investigate |
+
+## Self-Hosting
+
+### Deploy to Railway (Recommended)
 
 ```bash
-# Health check (no auth required)
-curl http://127.0.0.1:8000/health
+# One-click deploy
+railway up
 
-# Should return: {"status":"healthy"}
+# Or manually:
+railway init
+railway add --template postgres
+railway add --template redis
+railway up
 ```
 
-## API Overview
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/preflight)
 
-All endpoints except `/health` require authentication via `X-API-Key` header.
+### Deploy to Render
+
+```bash
+# Connect your repo at render.com/blueprints
+# Render auto-detects render.yaml
+```
+
+### Local Development
+
+```bash
+git clone https://github.com/your-org/preflight.git
+cd preflight
+
+# Setup
+cp .env.example .env
+# Edit .env with secrets: openssl rand -hex 32
+
+# Start infrastructure (simplified, no Temporal)
+docker compose -f docker-compose.simple.yml up -d
+
+# Install and run
+pip install -e ".[dev]"
+alembic upgrade head
+uvicorn src.api.main:app --reload
+```
+
+## Pricing
+
+| Tier | Price | Evaluations |
+|------|-------|-------------|
+| Free | $0 | 1,000/month |
+| Developer | $49/mo | 10,000/month |
+| Team | $199/mo | 100,000/month |
+| Enterprise | Custom | Unlimited + SLA |
+
+## Examples
+
+- [AWS Textract Integration](examples/python_textract.py)
+- [Azure Document Intelligence](examples/python_azure.py)
+
+## Documentation
+
+- [Quickstart Guide](docs/QUICKSTART.md) - 5-minute integration
+- [API Reference](docs/API.md) - Full endpoint docs
+- [Architecture](docs/ARCHITECTURE.md) - System design
+
+## Why Metadata-Only?
+
+1. **Zero compliance burden**: We can't leak PII we don't have
+2. **Universal compatibility**: Works with any extractor
+3. **Fast evaluation**: No document transfer, just lightweight metadata
+4. **Trust**: "We don't have your data" beats "trust our encryption"
+
+## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check (public) |
-| `/v1/status` | GET | Detailed status (auth required) |
 | `/v1/evaluate` | POST | Evaluate document metadata |
 | `/v1/templates` | GET | List templates |
 | `/v1/templates` | POST | Register template |
-| `/v1/templates/{id}` | GET | Get template details |
+| `/v1/templates/{id}` | GET/PATCH/DELETE | Template CRUD |
 
-### Example: Evaluate Document
+## Support
 
-```bash
-curl -X POST http://127.0.0.1:8000/v1/evaluate \
-  -H "X-API-Key: cp_your_api_key_here" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "layout_fingerprint": "a1b2c3d4e5f6...",
-    "structural_features": {
-      "element_count": 45,
-      "table_count": 2,
-      "text_block_count": 20,
-      "image_count": 1,
-      "page_count": 1,
-      "text_density": 0.65,
-      "layout_complexity": 0.4,
-      "column_count": 1,
-      "has_header": true,
-      "has_footer": true,
-      "bounding_boxes": []
-    },
-    "extractor_metadata": {
-      "vendor": "nvidia",
-      "model": "nemotron-parse",
-      "version": "1.2",
-      "confidence": 0.92,
-      "latency_ms": 450
-    },
-    "client_doc_hash": "sha256_of_document...",
-    "client_correlation_id": "order-12345",
-    "pipeline_id": "invoices-prod"
-  }'
-```
-
-## Development
-
-```bash
-# Run tests
-make test
-
-# Run linting
-make lint
-
-# Format code
-make format
-
-# View logs
-make logs
-
-# Open DB shell
-make db-shell
-
-# Open Redis CLI
-make redis-cli
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      CUSTOMER ENVIRONMENT                    │
-│   Documents → Local Extraction → Results Database            │
-│                       │ Metadata Only                        │
-└───────────────────────┼─────────────────────────────────────┘
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       CONTROL PLANE                          │
-│                                                              │
-│   ┌──────────────────────────────────────────────────────┐  │
-│   │                   FastAPI + Security                  │  │
-│   │  • API Key Auth (SHA256 hashed)                      │  │
-│   │  • Row-Level Security (tenant isolation)             │  │
-│   │  • Security Headers                                  │  │
-│   │  • Audit Logging                                     │  │
-│   └──────────────────────────────────────────────────────┘  │
-│                            │                                 │
-│   ┌──────────────────────────────────────────────────────┐  │
-│   │                   Decision Engine                     │  │
-│   │  • Template Matching (cosine similarity)             │  │
-│   │  • Drift Detection (z-score)                         │  │
-│   │  • Reliability Scoring (weighted average)            │  │
-│   │  • Correction Rules (deterministic)                  │  │
-│   └──────────────────────────────────────────────────────┘  │
-│                            │                                 │
-│   ┌──────────────────────────────────────────────────────┐  │
-│   │                   Data Stores                         │  │
-│   │  PostgreSQL (RLS) │ Redis (Cache) │ Temporal (Flows) │  │
-│   └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Security
-
-This system is designed for B2B enterprise use with security as a priority:
-
-- **API Key Authentication**: Keys stored as SHA256 hashes, never plaintext
-- **Multi-Tenant Isolation**: PostgreSQL Row-Level Security policies
-- **Audit Logging**: All sensitive operations logged
-- **Security Headers**: XSS protection, frame denial, content-type enforcement
-- **Input Validation**: Strict Pydantic models with constraints
-- **Secrets Management**: Validated on startup, no placeholder values allowed
-
-## Configuration
-
-All configuration via environment variables (see `.env.example`):
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string | Yes |
-| `REDIS_URL` | Redis connection string | Yes |
-| `POSTGRES_PASSWORD` | PostgreSQL password | Yes |
-| `REDIS_PASSWORD` | Redis password | Yes |
-| `JWT_SECRET` | JWT signing secret | Yes |
-| `API_KEY_SALT` | Salt for API key hashing | Yes |
-| `ALLOWED_ORIGINS` | CORS allowed origins | No |
-| `ENABLE_DOCS` | Enable /docs endpoint | No |
-| `LOG_LEVEL` | Logging level | No |
+- Issues: [GitHub Issues](https://github.com/your-org/preflight/issues)
+- Email: support@preflight.dev
+- Slack: [MLOps Community](https://mlops.community) #preflight
 
 ## License
 
-Proprietary
+Proprietary - [Contact us](mailto:hello@preflight.dev) for licensing options.

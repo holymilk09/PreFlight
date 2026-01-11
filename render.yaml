@@ -1,0 +1,44 @@
+# Render Blueprint
+# https://render.com/docs/blueprint-spec
+
+services:
+  # PreFlight API Service
+  - type: web
+    name: preflight-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: preflight-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: preflight-redis
+          property: connectionString
+      - key: API_SECRET_KEY
+        generateValue: true
+      - key: ADMIN_API_KEY
+        sync: false  # Set manually in dashboard
+      - key: SENTRY_DSN
+        sync: false  # Optional, set manually
+    scaling:
+      minInstances: 1
+      maxInstances: 3
+      targetMemoryPercent: 80
+      targetCPUPercent: 80
+
+databases:
+  # PostgreSQL Database
+  - name: preflight-db
+    plan: starter  # $7/month, upgrade as needed
+    databaseName: preflight
+    user: preflight
+
+# Redis Cache
+  - type: redis
+    name: preflight-redis
+    plan: starter  # $7/month
+    maxmemoryPolicy: allkeys-lru

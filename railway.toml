@@ -1,0 +1,20 @@
+# Railway deployment configuration
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "python -m uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Environment variables (set these in Railway dashboard or via CLI)
+# DATABASE_URL - PostgreSQL connection string (Railway provides this automatically)
+# REDIS_URL - Redis connection string (Railway provides this automatically)
+# API_SECRET_KEY - 32-byte hex string for signing
+# ADMIN_API_KEY - Admin API key for management endpoints
+# SENTRY_DSN - Optional, for error tracking

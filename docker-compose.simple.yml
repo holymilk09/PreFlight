@@ -1,0 +1,54 @@
+# Simplified Docker Compose for local development
+# Removes Temporal for simpler setup - use this for quick start
+#
+# Usage:
+#   cp .env.example .env
+#   # Edit .env with your secrets
+#   docker compose -f docker-compose.simple.yml up -d
+#   make migrate
+#   make dev
+
+services:
+  # PostgreSQL - Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: preflight-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-preflight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-preflight}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-preflight}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Cache and Rate Limiting
+  redis:
+    image: redis:7.2-alpine
+    container_name: preflight-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: preflight-network
