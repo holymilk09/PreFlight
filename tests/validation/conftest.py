@@ -1,7 +1,7 @@
 """Fixtures for validation tests using real document datasets."""
 
 import pytest
-from pathlib import Path
+
 
 # Mark all tests in this directory as validation tests (skip in CI)
 def pytest_collection_modifyitems(config, items):
@@ -16,6 +16,7 @@ def funsd_loader():
     """Get FUNSD dataset loader (downloads on first use)."""
     try:
         from tests.fixtures.datasets import FUNSDLoader
+
         return FUNSDLoader()
     except ImportError as e:
         pytest.skip(f"FUNSD loader not available: {e}")
@@ -55,6 +56,7 @@ def sroie_loader():
     """Get SROIE dataset loader (downloads on first use)."""
     try:
         from tests.fixtures.datasets.sroie_loader import SROIELoader
+
         return SROIELoader()
     except ImportError as e:
         pytest.skip(f"SROIE loader not available: {e}")
@@ -84,6 +86,7 @@ def sample_pairs(funsd_samples):
     Returns list of (sample_a, sample_b, is_same_category) tuples.
     """
     import random
+
     random.seed(42)  # Reproducible
 
     pairs = []
@@ -104,6 +107,7 @@ def cross_dataset_pairs(funsd_samples, sroie_samples):
     Forms should NOT match receipts (similarity < 0.50).
     """
     import random
+
     random.seed(42)
 
     pairs = []
@@ -113,7 +117,7 @@ def cross_dataset_pairs(funsd_samples, sroie_samples):
     funsd_subset = random.sample(funsd_samples, n_pairs)
     sroie_subset = random.sample(sroie_samples, n_pairs)
 
-    for f_sample, s_sample in zip(funsd_subset, sroie_subset):
+    for f_sample, s_sample in zip(funsd_subset, sroie_subset, strict=False):
         pairs.append((f_sample, s_sample))
 
     return pairs
@@ -123,10 +127,12 @@ def cross_dataset_pairs(funsd_samples, sroie_samples):
 # Synthetic Document Fixtures (for diverse document type testing)
 # ============================================================================
 
+
 @pytest.fixture(scope="session")
 def synthetic_generator():
     """Get synthetic document generator."""
     from tests.fixtures.datasets.synthetic_documents import SyntheticDocumentGenerator
+
     return SyntheticDocumentGenerator(seed=42)
 
 
@@ -147,6 +153,7 @@ def synthetic_by_category(synthetic_samples):
     Returns dict mapping category name to list of samples.
     """
     from collections import defaultdict
+
     by_cat = defaultdict(list)
     for sample in synthetic_samples:
         by_cat[sample.category].append(sample)

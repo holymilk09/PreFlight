@@ -107,9 +107,7 @@ class Template(SQLModel, table=True):
     fingerprint: str = SQLField(max_length=64, nullable=False)  # SHA256 of features
     structural_features: dict[str, Any] = SQLField(sa_column=Column(JSONB, nullable=False))
     baseline_reliability: float = SQLField(default=0.85)
-    correction_rules: list[dict[str, Any]] = SQLField(
-        default_factory=list, sa_column=Column(JSONB)
-    )
+    correction_rules: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSONB))
     status: TemplateStatus = SQLField(default=TemplateStatus.ACTIVE)
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     created_by: UUID | None = SQLField(default=None)
@@ -138,9 +136,7 @@ class Evaluation(SQLModel, table=True):
     match_confidence: float | None = SQLField(default=None)
     drift_score: float | None = SQLField(default=None)
     reliability_score: float | None = SQLField(default=None)
-    correction_rules: list[dict[str, Any]] = SQLField(
-        default_factory=list, sa_column=Column(JSONB)
-    )
+    correction_rules: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSONB))
     extractor_vendor: str | None = SQLField(max_length=100, default=None)
     extractor_model: str | None = SQLField(max_length=100, default=None)
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
@@ -217,7 +213,9 @@ class EvaluateRequest(SQLModel):
     layout_fingerprint: str = Field(max_length=64, description="SHA256 hash of structural features")
     structural_features: StructuralFeatures
     extractor_metadata: ExtractorMetadata
-    client_doc_hash: str = Field(max_length=64, description="Client's document SHA256 (we never see content)")
+    client_doc_hash: str = Field(
+        max_length=64, description="Client's document SHA256 (we never see content)"
+    )
     client_correlation_id: str = Field(max_length=255, description="Client's correlation ID")
     pipeline_id: str = Field(max_length=255, description="Client's pipeline identifier")
 

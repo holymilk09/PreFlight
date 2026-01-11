@@ -87,8 +87,7 @@ class TestMetricsRequestTracking:
         # Look for the exact pattern that would indicate /metrics is being tracked
         lines = content.split("\n")
         metrics_tracked = any(
-            'endpoint="/metrics"' in line and "preflight_requests_total" in line
-            for line in lines
+            'endpoint="/metrics"' in line and "preflight_requests_total" in line for line in lines
         )
         assert not metrics_tracked
 

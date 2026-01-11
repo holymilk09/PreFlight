@@ -81,6 +81,7 @@ class MinHashLSH:
         """
         try:
             from src.services.rate_limiter import get_redis_client
+
             self._redis = await get_redis_client()
             await self._redis.ping()
             self._available = True
@@ -261,10 +262,12 @@ class MinHashLSH:
                 if sig_bytes:
                     cand_sig = _bytes_to_signature(sig_bytes)
                     similarity = estimate_jaccard_similarity(query_sig, cand_sig)
-                    candidates.append(LSHCandidate(
-                        template_id=UUID(cid),
-                        estimated_similarity=similarity,
-                    ))
+                    candidates.append(
+                        LSHCandidate(
+                            template_id=UUID(cid),
+                            estimated_similarity=similarity,
+                        )
+                    )
 
             # Sort by similarity and return top k
             candidates.sort(key=lambda c: c.estimated_similarity, reverse=True)
@@ -336,19 +339,20 @@ class MinHashLSH:
 def _hash_band(band: tuple[int, ...]) -> str:
     """Hash a band tuple to a string key."""
     import hashlib
-    band_bytes = struct.pack(f'<{len(band)}Q', *band)
+
+    band_bytes = struct.pack(f"<{len(band)}Q", *band)
     return hashlib.md5(band_bytes, usedforsecurity=False).hexdigest()[:16]
 
 
 def _signature_to_bytes(signature: tuple[int, ...]) -> bytes:
     """Convert signature tuple to bytes for storage."""
-    return struct.pack(f'<{len(signature)}Q', *signature)
+    return struct.pack(f"<{len(signature)}Q", *signature)
 
 
 def _bytes_to_signature(data: bytes) -> tuple[int, ...]:
     """Convert bytes back to signature tuple."""
     count = len(data) // 8
-    return struct.unpack(f'<{count}Q', data)
+    return struct.unpack(f"<{count}Q", data)
 
 
 # -----------------------------------------------------------------------------

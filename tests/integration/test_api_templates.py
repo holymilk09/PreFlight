@@ -1,7 +1,6 @@
 """Integration tests for template API endpoints."""
 
 import pytest
-from uuid import UUID
 from httpx import AsyncClient
 
 

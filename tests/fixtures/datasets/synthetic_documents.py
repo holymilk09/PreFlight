@@ -11,11 +11,10 @@ This allows testing of:
 """
 
 import random
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from src.models import BoundingBox, StructuralFeatures
-
 from tests.fixtures.datasets.loader import DocumentSample
 
 
@@ -127,11 +126,7 @@ class SyntheticDocumentGenerator:
         """Initialize generator with optional seed for reproducibility."""
         self.rng = random.Random(seed)
 
-    def generate(
-        self,
-        doc_type: str,
-        count: int = 100
-    ) -> Iterator[DocumentSample]:
+    def generate(self, doc_type: str, count: int = 100) -> Iterator[DocumentSample]:
         """Generate synthetic samples for a specific document type.
 
         Args:
@@ -162,9 +157,7 @@ class SyntheticDocumentGenerator:
             )
 
     def generate_mixed(
-        self,
-        count: int = 600,
-        types: list[str] | None = None
+        self, count: int = 600, types: list[str] | None = None
     ) -> Iterator[DocumentSample]:
         """Generate mixed samples across document types.
 
@@ -204,12 +197,7 @@ class SyntheticDocumentGenerator:
         has_footer = self.rng.random() < profile.has_footer_prob
 
         # Generate bounding boxes
-        bboxes = self._generate_bboxes(
-            element_count,
-            table_count,
-            image_count,
-            column_count
-        )
+        bboxes = self._generate_bboxes(element_count, table_count, image_count, column_count)
 
         return StructuralFeatures(
             element_count=element_count,
@@ -226,11 +214,7 @@ class SyntheticDocumentGenerator:
         )
 
     def _generate_bboxes(
-        self,
-        total: int,
-        tables: int,
-        images: int,
-        columns: int
+        self, total: int, tables: int, images: int, columns: int
     ) -> list[BoundingBox]:
         """Generate synthetic bounding boxes."""
         bboxes = []
@@ -260,15 +244,17 @@ class SyntheticDocumentGenerator:
             y = self.rng.uniform(0.05, 0.9)
             y = min(y, 1.0 - height)
 
-            bboxes.append(BoundingBox(
-                x=x,
-                y=y,
-                width=width,
-                height=height,
-                element_type=elem_type,
-                confidence=self.rng.uniform(0.85, 0.99),
-                reading_order=i,
-            ))
+            bboxes.append(
+                BoundingBox(
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    element_type=elem_type,
+                    confidence=self.rng.uniform(0.85, 0.99),
+                    reading_order=i,
+                )
+            )
 
         return bboxes
 

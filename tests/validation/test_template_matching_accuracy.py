@@ -5,12 +5,13 @@ that our cosine similarity based template matching works correctly and can
 distinguish between different document types.
 """
 
-import pytest
 from collections import defaultdict
 
+import pytest
+
 from src.services.template_matcher import (
-    _extract_feature_vector,
     _cosine_similarity,
+    _extract_feature_vector,
 )
 
 
@@ -40,9 +41,16 @@ class TestFeatureExtractionOnRealData:
 
         # Check each feature dimension
         feature_names = [
-            "element_count", "table_count", "text_block_count", "image_count",
-            "page_count", "text_density", "layout_complexity", "column_count",
-            "has_header", "has_footer"
+            "element_count",
+            "table_count",
+            "text_block_count",
+            "image_count",
+            "page_count",
+            "text_density",
+            "layout_complexity",
+            "column_count",
+            "has_header",
+            "has_footer",
         ]
 
         stats = {}
@@ -87,6 +95,7 @@ class TestSimilarityOnRealData:
     def test_similarity_distribution(self, funsd_samples):
         """Similarity between forms should follow expected distribution."""
         import random
+
         random.seed(42)
 
         # Sample pairs randomly
@@ -120,7 +129,7 @@ class TestSimilarityOnRealData:
 
         print(f"\nSimilarity Distribution (n={len(similarities)} pairs):")
         print(f"  Min: {min_sim:.3f}, Max: {max_sim:.3f}, Mean: {mean_sim:.3f}")
-        print(f"  Buckets:")
+        print("  Buckets:")
         for bucket, count in sorted(buckets.items()):
             pct = count / len(similarities) * 100
             print(f"    {bucket}: {count} ({pct:.1f}%)")
@@ -134,6 +143,7 @@ class TestSimilarityOnRealData:
     def test_threshold_effectiveness(self, funsd_samples):
         """Test if current thresholds (0.50, 0.85) make sense for FUNSD."""
         import random
+
         random.seed(42)
 
         # Sample pairs
@@ -145,11 +155,13 @@ class TestSimilarityOnRealData:
                 vec_a = _extract_feature_vector(funsd_samples[i].features)
                 vec_b = _extract_feature_vector(funsd_samples[j].features)
                 sim = _cosine_similarity(vec_a, vec_b)
-                similarities.append({
-                    "sample_a": funsd_samples[i].id,
-                    "sample_b": funsd_samples[j].id,
-                    "similarity": sim,
-                })
+                similarities.append(
+                    {
+                        "sample_a": funsd_samples[i].id,
+                        "sample_b": funsd_samples[j].id,
+                        "similarity": sim,
+                    }
+                )
 
         # Count decisions at current thresholds
         match_count = sum(1 for s in similarities if s["similarity"] >= 0.85)
@@ -157,16 +169,16 @@ class TestSimilarityOnRealData:
         new_count = sum(1 for s in similarities if s["similarity"] < 0.50)
 
         total = len(similarities)
-        print(f"\nThreshold Analysis (current thresholds: MATCH>=0.85, REVIEW>=0.50):")
-        print(f"  MATCH (>=0.85): {match_count} ({match_count/total*100:.1f}%)")
-        print(f"  REVIEW (0.50-0.85): {review_count} ({review_count/total*100:.1f}%)")
-        print(f"  NEW (<0.50): {new_count} ({new_count/total*100:.1f}%)")
+        print("\nThreshold Analysis (current thresholds: MATCH>=0.85, REVIEW>=0.50):")
+        print(f"  MATCH (>=0.85): {match_count} ({match_count / total * 100:.1f}%)")
+        print(f"  REVIEW (0.50-0.85): {review_count} ({review_count / total * 100:.1f}%)")
+        print(f"  NEW (<0.50): {new_count} ({new_count / total * 100:.1f}%)")
 
         # Since all samples are forms, we expect:
         # - Some high similarity (similar form structures)
         # - Very few completely dissimilar (< 0.50)
         assert new_count / total < 0.3, (
-            f"Too many NEW decisions ({new_count/total*100:.1f}%) for same document type"
+            f"Too many NEW decisions ({new_count / total * 100:.1f}%) for same document type"
         )
 
 
@@ -197,23 +209,23 @@ class TestMatchingAccuracy:
                     best_sim = sim
                     best_template = templates[i]
 
-            match_results.append({
-                "test_id": test_sample.id,
-                "best_match": best_template.id if best_template else None,
-                "similarity": best_sim,
-                "decision": (
-                    "MATCH" if best_sim >= 0.85 else
-                    "REVIEW" if best_sim >= 0.50 else
-                    "NEW"
-                ),
-            })
+            match_results.append(
+                {
+                    "test_id": test_sample.id,
+                    "best_match": best_template.id if best_template else None,
+                    "similarity": best_sim,
+                    "decision": (
+                        "MATCH" if best_sim >= 0.85 else "REVIEW" if best_sim >= 0.50 else "NEW"
+                    ),
+                }
+            )
 
         # Analyze results
         decisions = defaultdict(int)
         for r in match_results:
             decisions[r["decision"]] += 1
 
-        print(f"\nMatching Results (10 templates vs 20 test forms):")
+        print("\nMatching Results (10 templates vs 20 test forms):")
         for decision, count in sorted(decisions.items()):
             print(f"  {decision}: {count}")
 
@@ -250,6 +262,7 @@ class TestCrossDatasetSeparation:
     def test_sroie_self_similarity(self, sroie_samples):
         """Receipts should have high similarity with other receipts."""
         import random
+
         random.seed(42)
 
         similarities = []
@@ -281,11 +294,13 @@ class TestCrossDatasetSeparation:
             vec_funsd = _extract_feature_vector(funsd_sample.features)
             vec_sroie = _extract_feature_vector(sroie_sample.features)
             sim = _cosine_similarity(vec_funsd, vec_sroie)
-            similarities.append({
-                "funsd_id": funsd_sample.id,
-                "sroie_id": sroie_sample.id,
-                "similarity": sim,
-            })
+            similarities.append(
+                {
+                    "funsd_id": funsd_sample.id,
+                    "sroie_id": sroie_sample.id,
+                    "similarity": sim,
+                }
+            )
 
         sims = [s["similarity"] for s in similarities]
         mean_sim = sum(sims) / len(sims)
@@ -297,13 +312,13 @@ class TestCrossDatasetSeparation:
         review_count = sum(1 for s in sims if 0.50 <= s < 0.85)
         new_count = sum(1 for s in sims if s < 0.50)
 
-        print(f"\nCross-Dataset Similarity (Forms vs Receipts):")
+        print("\nCross-Dataset Similarity (Forms vs Receipts):")
         print(f"  Pairs: {len(similarities)}")
         print(f"  Min: {min_sim:.3f}, Max: {max_sim:.3f}, Mean: {mean_sim:.3f}")
-        print(f"  Decisions:")
-        print(f"    MATCH (>=0.85): {match_count} ({match_count/len(sims)*100:.1f}%)")
-        print(f"    REVIEW (0.50-0.85): {review_count} ({review_count/len(sims)*100:.1f}%)")
-        print(f"    NEW (<0.50): {new_count} ({new_count/len(sims)*100:.1f}%)")
+        print("  Decisions:")
+        print(f"    MATCH (>=0.85): {match_count} ({match_count / len(sims) * 100:.1f}%)")
+        print(f"    REVIEW (0.50-0.85): {review_count} ({review_count / len(sims) * 100:.1f}%)")
+        print(f"    NEW (<0.50): {new_count} ({new_count / len(sims) * 100:.1f}%)")
 
         # Note: Forms and receipts have similar structural characteristics
         # (element counts, text density, layout complexity) so cross-type
@@ -320,8 +335,8 @@ class TestCrossDatasetSeparation:
         # Log if cross-type similarity is unexpectedly high
         if mean_sim > 0.90:
             print(f"  NOTE: High cross-type similarity ({mean_sim:.3f}) indicates")
-            print(f"        forms and receipts share structural characteristics.")
-            print(f"        Consider adding document-type-specific features.")
+            print("        forms and receipts share structural characteristics.")
+            print("        Consider adding document-type-specific features.")
 
     @pytest.mark.validation
     def test_threshold_validation_across_types(self, funsd_samples, sroie_samples):
@@ -332,6 +347,7 @@ class TestCrossDatasetSeparation:
         - Different type → mostly REVIEW or NEW
         """
         import random
+
         random.seed(42)
 
         results = {
@@ -372,7 +388,9 @@ class TestCrossDatasetSeparation:
             review = sum(1 for s in sims if 0.50 <= s < 0.85) / len(sims) * 100
             new = sum(1 for s in sims if s < 0.50) / len(sims) * 100
             print(f"  {category}:")
-            print(f"    Mean: {mean:.3f}, MATCH: {match:.1f}%, REVIEW: {review:.1f}%, NEW: {new:.1f}%")
+            print(
+                f"    Mean: {mean:.3f}, MATCH: {match:.1f}%, REVIEW: {review:.1f}%, NEW: {new:.1f}%"
+            )
 
         # Same-type should have higher mean similarity than cross-type
         funsd_mean = sum(results["same_type_funsd"]) / len(results["same_type_funsd"])
@@ -435,6 +453,7 @@ class TestDiverseDocumentTypes:
     def test_cross_category_patterns(self, synthetic_by_category):
         """Different document types should show varying similarity patterns."""
         import random
+
         random.seed(42)
 
         categories = list(synthetic_by_category.keys())
@@ -492,7 +511,9 @@ class TestDiverseDocumentTypes:
         fin_avg = sum(fin_tables) / len(fin_tables)
         legal_avg = sum(legal_tables) / len(legal_tables)
 
-        print(f"\nTable counts: financial_report avg={fin_avg:.1f}, legal_document avg={legal_avg:.1f}")
+        print(
+            f"\nTable counts: financial_report avg={fin_avg:.1f}, legal_document avg={legal_avg:.1f}"
+        )
 
         # Financial reports should have more tables on average
         assert fin_avg > legal_avg, "Financial reports should have more tables than legal docs"
@@ -521,6 +542,7 @@ class TestDiverseDocumentTypes:
     def test_threshold_across_all_types(self, synthetic_samples):
         """Test current thresholds work across all synthetic document types."""
         import random
+
         random.seed(42)
 
         n = len(synthetic_samples)
@@ -543,7 +565,7 @@ class TestDiverseDocumentTypes:
         same_mean = sum(same_type_sims) / len(same_type_sims) if same_type_sims else 0
         cross_mean = sum(cross_type_sims) / len(cross_type_sims) if cross_type_sims else 0
 
-        print(f"\nSynthetic Threshold Analysis:")
+        print("\nSynthetic Threshold Analysis:")
         print(f"  Same-type pairs: {len(same_type_sims)}, mean={same_mean:.3f}")
         print(f"  Cross-type pairs: {len(cross_type_sims)}, mean={cross_mean:.3f}")
 

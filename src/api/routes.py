@@ -407,9 +407,7 @@ async def update_template(
     )
 
     # Parse correction rules from stored JSON
-    correction_rules = [
-        CorrectionRule(**r) for r in (template.correction_rules or [])
-    ]
+    correction_rules = [CorrectionRule(**r) for r in (template.correction_rules or [])]
 
     return TemplateResponse(
         id=template.id,
@@ -540,9 +538,7 @@ async def update_template_status(
     )
 
     # Parse correction rules from stored JSON
-    correction_rules = [
-        CorrectionRule(**r) for r in (template.correction_rules or [])
-    ]
+    correction_rules = [CorrectionRule(**r) for r in (template.correction_rules or [])]
 
     return TemplateResponse(
         id=template.id,

@@ -10,21 +10,22 @@ Current thresholds:
 """
 
 import json
-import pytest
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+
+import pytest
 
 from src.services.template_matcher import (
-    _extract_feature_vector,
     _cosine_similarity,
+    _extract_feature_vector,
 )
 
 
 @dataclass
 class CalibrationResult:
     """Result of threshold calibration analysis."""
+
     dataset: str
     sample_count: int
     pair_count: int
@@ -41,6 +42,7 @@ class TestThresholdCalibration:
     def test_generate_calibration_report(self, funsd_samples):
         """Generate a threshold calibration report from FUNSD data."""
         import random
+
         random.seed(42)
 
         # Compute all pairwise similarities (sample for large datasets)
@@ -85,7 +87,7 @@ class TestThresholdCalibration:
         buckets = defaultdict(int)
         for sim in similarities:
             bucket = int(sim * 10) / 10  # Round down to nearest 0.1
-            buckets[f"{bucket:.1f}-{bucket+0.1:.1f}"] += 1
+            buckets[f"{bucket:.1f}-{bucket + 0.1:.1f}"] += 1
 
         # Calculate percentages
         distribution = {
@@ -142,23 +144,29 @@ class TestThresholdCalibration:
 
         # Analyze impact of current vs recommended thresholds
         current_match = sum(1 for s in similarities if s >= current["match_threshold"])
-        current_review = sum(1 for s in similarities if current["review_threshold"] <= s < current["match_threshold"])
+        current_review = sum(
+            1 for s in similarities if current["review_threshold"] <= s < current["match_threshold"]
+        )
         current_new = sum(1 for s in similarities if s < current["review_threshold"])
 
         rec_match = sum(1 for s in similarities if s >= recommended["match_threshold"])
-        rec_review = sum(1 for s in similarities if recommended["review_threshold"] <= s < recommended["match_threshold"])
+        rec_review = sum(
+            1
+            for s in similarities
+            if recommended["review_threshold"] <= s < recommended["match_threshold"]
+        )
         rec_new = sum(1 for s in similarities if s < recommended["review_threshold"])
 
         print("\n--- Decision Distribution ---")
         print("  With CURRENT thresholds:")
-        print(f"    MATCH:  {current_match:4d} ({current_match/len(similarities)*100:5.1f}%)")
-        print(f"    REVIEW: {current_review:4d} ({current_review/len(similarities)*100:5.1f}%)")
-        print(f"    NEW:    {current_new:4d} ({current_new/len(similarities)*100:5.1f}%)")
+        print(f"    MATCH:  {current_match:4d} ({current_match / len(similarities) * 100:5.1f}%)")
+        print(f"    REVIEW: {current_review:4d} ({current_review / len(similarities) * 100:5.1f}%)")
+        print(f"    NEW:    {current_new:4d} ({current_new / len(similarities) * 100:5.1f}%)")
 
         print("  With RECOMMENDED thresholds:")
-        print(f"    MATCH:  {rec_match:4d} ({rec_match/len(similarities)*100:5.1f}%)")
-        print(f"    REVIEW: {rec_review:4d} ({rec_review/len(similarities)*100:5.1f}%)")
-        print(f"    NEW:    {rec_new:4d} ({rec_new/len(similarities)*100:5.1f}%)")
+        print(f"    MATCH:  {rec_match:4d} ({rec_match / len(similarities) * 100:5.1f}%)")
+        print(f"    REVIEW: {rec_review:4d} ({rec_review / len(similarities) * 100:5.1f}%)")
+        print(f"    NEW:    {rec_new:4d} ({rec_new / len(similarities) * 100:5.1f}%)")
 
         print("=" * 60)
 
@@ -199,8 +207,8 @@ class TestThresholdCalibration:
     @pytest.mark.validation
     def test_drift_score_sensitivity(self, funsd_samples):
         """Test drift detection sensitivity on real data."""
-        from src.services.drift_detector import compute_drift_score
         from src.models import Template, TemplateStatus
+        from src.services.drift_detector import compute_drift_score
 
         if len(funsd_samples) < 20:
             pytest.skip("Not enough samples for drift analysis")
@@ -222,13 +230,16 @@ class TestThresholdCalibration:
         drift_scores = []
         for sample in funsd_samples[1:50]:
             import asyncio
+
             drift = asyncio.get_event_loop().run_until_complete(
                 compute_drift_score(template, sample.features)
             )
-            drift_scores.append({
-                "sample_id": sample.id,
-                "drift_score": drift,
-            })
+            drift_scores.append(
+                {
+                    "sample_id": sample.id,
+                    "drift_score": drift,
+                }
+            )
 
         # Analyze drift distribution
         drift_values = [d["drift_score"] for d in drift_scores]
@@ -246,9 +257,11 @@ class TestThresholdCalibration:
         print("\n--- Drift Score Analysis ---")
         print(f"  Samples analyzed: {len(drift_scores)}")
         print(f"  Min: {stats['min']:.4f}, Max: {stats['max']:.4f}, Mean: {stats['mean']:.4f}")
-        print(f"  Low drift (<0.15):    {low_drift} ({low_drift/len(drift_scores)*100:.1f}%)")
-        print(f"  Medium drift (0.15-0.30): {medium_drift} ({medium_drift/len(drift_scores)*100:.1f}%)")
-        print(f"  High drift (>=0.30):  {high_drift} ({high_drift/len(drift_scores)*100:.1f}%)")
+        print(f"  Low drift (<0.15):    {low_drift} ({low_drift / len(drift_scores) * 100:.1f}%)")
+        print(
+            f"  Medium drift (0.15-0.30): {medium_drift} ({medium_drift / len(drift_scores) * 100:.1f}%)"
+        )
+        print(f"  High drift (>=0.30):  {high_drift} ({high_drift / len(drift_scores) * 100:.1f}%)")
 
         # Most forms should show some drift (they're different documents)
         assert stats["max"] > 0.1, "No significant drift detected between forms"

@@ -29,10 +29,10 @@ def _get_hash_coefficients() -> list[tuple[int, int]]:
     global _HASH_COEFFS
     if _HASH_COEFFS is None:
         import random
+
         rng = random.Random(42)  # Deterministic seed
         _HASH_COEFFS = [
-            (rng.randint(1, PRIME - 1), rng.randint(0, PRIME - 1))
-            for _ in range(NUM_HASHES)
+            (rng.randint(1, PRIME - 1), rng.randint(0, PRIME - 1)) for _ in range(NUM_HASHES)
         ]
     return _HASH_COEFFS
 
@@ -42,8 +42,8 @@ def _murmurhash3_32(data: bytes, seed: int = 0) -> int:
 
     Uses hashlib for portability since murmurhash3 isn't in stdlib.
     """
-    h = hashlib.md5(data + struct.pack('<I', seed), usedforsecurity=False)
-    return struct.unpack('<I', h.digest()[:4])[0]
+    h = hashlib.md5(data + struct.pack("<I", seed), usedforsecurity=False)
+    return struct.unpack("<I", h.digest()[:4])[0]
 
 
 def features_to_shingles(features: StructuralFeatures) -> set[int]:

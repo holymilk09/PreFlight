@@ -1,7 +1,8 @@
 """Tests for rate limiting service."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.services.rate_limiter import RateLimiter, RateLimitResult
 
@@ -177,7 +178,6 @@ class TestGetClientIP:
     def test_direct_connection(self):
         """Test IP extraction from direct connection."""
         from src.api.main import _get_client_ip
-        from unittest.mock import MagicMock
 
         request = MagicMock()
         request.headers = {}
@@ -189,7 +189,6 @@ class TestGetClientIP:
     def test_x_forwarded_for_single(self):
         """Test IP extraction with single X-Forwarded-For."""
         from src.api.main import _get_client_ip
-        from unittest.mock import MagicMock
 
         request = MagicMock()
         request.headers = {"X-Forwarded-For": "10.0.0.1"}
@@ -201,7 +200,6 @@ class TestGetClientIP:
     def test_x_forwarded_for_chain(self):
         """Test IP extraction takes rightmost IP from chain."""
         from src.api.main import _get_client_ip
-        from unittest.mock import MagicMock
 
         request = MagicMock()
         # Client-provided: 1.1.1.1, passed through proxy at 10.0.0.1
@@ -215,7 +213,6 @@ class TestGetClientIP:
     def test_no_client(self):
         """Test IP extraction when client is None."""
         from src.api.main import _get_client_ip
-        from unittest.mock import MagicMock
 
         request = MagicMock()
         request.headers = {}

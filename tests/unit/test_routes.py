@@ -1,15 +1,15 @@
 """Unit tests for API routes logic."""
 
 import hashlib
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from uuid_extensions import uuid7
 
 from src.models import (
     Decision,
     EvaluateRequest,
     ExtractorMetadata,
-    StructuralFeatures,
     Template,
     TemplateStatus,
 )
@@ -77,9 +77,10 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(None, 0.0)) as mock_match, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch("src.api.routes.match_template", return_value=(None, 0.0)) as mock_match,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(
@@ -120,14 +121,22 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(mock_template, 0.70)) as mock_match, \
-             patch("src.api.routes.compute_drift_score", return_value=0.15) as mock_drift, \
-             patch("src.api.routes.compute_reliability_score", return_value=0.82) as mock_reliability, \
-             patch("src.api.routes.select_correction_rules", return_value=[
-                 CorrectionRule(field="total", rule="sum_line_items", parameters=None)
-             ]) as mock_rules, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch(
+                "src.api.routes.match_template", return_value=(mock_template, 0.70)
+            ) as mock_match,
+            patch("src.api.routes.compute_drift_score", return_value=0.15) as mock_drift,
+            patch(
+                "src.api.routes.compute_reliability_score", return_value=0.82
+            ) as mock_reliability,
+            patch(
+                "src.api.routes.select_correction_rules",
+                return_value=[
+                    CorrectionRule(field="total", rule="sum_line_items", parameters=None)
+                ],
+            ) as mock_rules,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(
@@ -138,7 +147,10 @@ class TestEvaluateDecisionLogic:
             )
 
             assert response.decision == Decision.REVIEW
-            assert response.template_version_id == f"{mock_template.template_id}:{mock_template.version}"
+            assert (
+                response.template_version_id
+                == f"{mock_template.template_id}:{mock_template.version}"
+            )
             assert response.drift_score == 0.15
             assert response.reliability_score == 0.82
             assert len(response.correction_rules) == 1
@@ -168,14 +180,22 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(mock_template, 0.95)) as mock_match, \
-             patch("src.api.routes.compute_drift_score", return_value=0.05) as mock_drift, \
-             patch("src.api.routes.compute_reliability_score", return_value=0.90) as mock_reliability, \
-             patch("src.api.routes.select_correction_rules", return_value=[
-                 CorrectionRule(field="total", rule="sum_line_items", parameters=None)
-             ]) as mock_rules, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch(
+                "src.api.routes.match_template", return_value=(mock_template, 0.95)
+            ) as mock_match,
+            patch("src.api.routes.compute_drift_score", return_value=0.05) as mock_drift,
+            patch(
+                "src.api.routes.compute_reliability_score", return_value=0.90
+            ) as mock_reliability,
+            patch(
+                "src.api.routes.select_correction_rules",
+                return_value=[
+                    CorrectionRule(field="total", rule="sum_line_items", parameters=None)
+                ],
+            ) as mock_rules,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(
@@ -186,7 +206,10 @@ class TestEvaluateDecisionLogic:
             )
 
             assert response.decision == Decision.MATCH
-            assert response.template_version_id == f"{mock_template.template_id}:{mock_template.version}"
+            assert (
+                response.template_version_id
+                == f"{mock_template.template_id}:{mock_template.version}"
+            )
             assert response.drift_score == 0.05
             assert response.reliability_score == 0.90
 
@@ -214,12 +237,17 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(mock_template, 0.90)) as mock_match, \
-             patch("src.api.routes.compute_drift_score", return_value=0.45) as mock_drift, \
-             patch("src.api.routes.compute_reliability_score", return_value=0.85) as mock_reliability, \
-             patch("src.api.routes.select_correction_rules", return_value=[]) as mock_rules, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch(
+                "src.api.routes.match_template", return_value=(mock_template, 0.90)
+            ) as mock_match,
+            patch("src.api.routes.compute_drift_score", return_value=0.45) as mock_drift,
+            patch(
+                "src.api.routes.compute_reliability_score", return_value=0.85
+            ) as mock_reliability,
+            patch("src.api.routes.select_correction_rules", return_value=[]) as mock_rules,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(
@@ -256,12 +284,17 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(mock_template, 0.90)) as mock_match, \
-             patch("src.api.routes.compute_drift_score", return_value=0.10) as mock_drift, \
-             patch("src.api.routes.compute_reliability_score", return_value=0.65) as mock_reliability, \
-             patch("src.api.routes.select_correction_rules", return_value=[]) as mock_rules, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch(
+                "src.api.routes.match_template", return_value=(mock_template, 0.90)
+            ) as mock_match,
+            patch("src.api.routes.compute_drift_score", return_value=0.10) as mock_drift,
+            patch(
+                "src.api.routes.compute_reliability_score", return_value=0.65
+            ) as mock_reliability,
+            patch("src.api.routes.select_correction_rules", return_value=[]) as mock_rules,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(
@@ -297,9 +330,10 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(None, 0.0)) as mock_match, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch("src.api.routes.match_template", return_value=(None, 0.0)) as mock_match,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(
@@ -342,9 +376,10 @@ class TestEvaluateDecisionLogic:
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
 
-        with patch("src.api.routes.match_template", return_value=(None, 0.0)) as mock_match, \
-             patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log:
-
+        with (
+            patch("src.api.routes.match_template", return_value=(None, 0.0)) as mock_match,
+            patch("src.api.routes.log_evaluation_requested", new_callable=AsyncMock) as mock_log,
+        ):
             from src.api.routes import evaluate
 
             response = await evaluate(

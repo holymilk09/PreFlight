@@ -7,11 +7,9 @@ Dataset: https://huggingface.co/datasets/rth/sroie-2019-v2
 Competition: https://rrc.cvc.uab.es/?ch=13
 """
 
-from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 from src.models import BoundingBox, StructuralFeatures
-
 from tests.fixtures.datasets.loader import (
     DatasetLoader,
     DocumentSample,
@@ -160,9 +158,7 @@ class SROIELoader(DatasetLoader):
             },
         )
 
-    def _extract_bboxes(
-        self, item: dict, page_width: int, page_height: int
-    ) -> list[BoundingBox]:
+    def _extract_bboxes(self, item: dict, page_width: int, page_height: int) -> list[BoundingBox]:
         """Extract bounding boxes from SROIE item.
 
         SROIE format (rth/sroie-2019-v2):
@@ -205,15 +201,17 @@ class SROIELoader(DatasetLoader):
             norm_w = max(0.0, min(1.0, (x_max - x_min) / page_width))
             norm_h = max(0.0, min(1.0, (y_max - y_min) / page_height))
 
-            bboxes.append(BoundingBox(
-                x=norm_x,
-                y=norm_y,
-                width=norm_w,
-                height=norm_h,
-                element_type="text",  # SROIE is all text elements
-                confidence=0.95,  # High confidence for ground truth
-                reading_order=i,
-            ))
+            bboxes.append(
+                BoundingBox(
+                    x=norm_x,
+                    y=norm_y,
+                    width=norm_w,
+                    height=norm_h,
+                    element_type="text",  # SROIE is all text elements
+                    confidence=0.95,  # High confidence for ground truth
+                    reading_order=i,
+                )
+            )
 
         return bboxes
 

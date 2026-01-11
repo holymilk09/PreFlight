@@ -4,22 +4,24 @@ import os
 
 # Set required environment variables BEFORE any src imports
 # These are test values - must match .env for integration tests
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://controlplane:test_postgres_password_12345678901234567890@localhost:5432/controlplane")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://controlplane:test_postgres_password_12345678901234567890@localhost:5432/controlplane",
+)
 os.environ.setdefault("POSTGRES_PASSWORD", "test_postgres_password_12345678901234567890")
-os.environ.setdefault("REDIS_URL", "redis://:test_redis_password_12345678901234567890@localhost:6379/0")
+os.environ.setdefault(
+    "REDIS_URL", "redis://:test_redis_password_12345678901234567890@localhost:6379/0"
+)
 os.environ.setdefault("REDIS_PASSWORD", "test_redis_password_12345678901234567890")
 os.environ.setdefault("JWT_SECRET", "test_jwt_secret_1234567890123456789012345678901234567890")
 os.environ.setdefault("API_KEY_SALT", "test_api_key_salt_12345678901234567890123456789012")
 
+
 import pytest
-from uuid import UUID
 from uuid_extensions import uuid7
 
 from src.models import (
     APIKey,
-    AuditLog,
-    CorrectionRule,
-    Evaluation,
     ExtractorMetadata,
     StructuralFeatures,
     Template,
@@ -70,9 +72,7 @@ def sample_template(sample_structural_features: StructuralFeatures) -> Template:
         fingerprint="abc123" * 10 + "abcd",  # 64 char hex
         structural_features=sample_structural_features.model_dump(),
         baseline_reliability=0.85,
-        correction_rules=[
-            {"field": "total", "rule": "sum_line_items", "parameters": None}
-        ],
+        correction_rules=[{"field": "total", "rule": "sum_line_items", "parameters": None}],
         status=TemplateStatus.ACTIVE,
     )
 
@@ -112,21 +112,20 @@ def low_confidence_extractor() -> ExtractorMetadata:
 # Integration Test Fixtures
 # -----------------------------------------------------------------------------
 
-from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient, ASGITransport
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock
+
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
-from src.models import APIKey, Tenant
 from src.security import generate_api_key
-
 
 # Test database URL (uses same credentials as main DB but different database name)
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    f"postgresql+asyncpg://controlplane:{os.environ.get('POSTGRES_PASSWORD', 'test_postgres_password_12345678901234567890')}@localhost:5432/control_plane_test"
+    f"postgresql+asyncpg://controlplane:{os.environ.get('POSTGRES_PASSWORD', 'test_postgres_password_12345678901234567890')}@localhost:5432/control_plane_test",
 )
 
 
@@ -150,7 +149,8 @@ async def test_engine():
     # Set up RLS policies (idempotent - will not error if already exist)
     async with engine.begin() as conn:
         # Create a non-superuser role for RLS testing (superusers bypass all RLS)
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             DO $$
             BEGIN
                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'test_rls_user') THEN
@@ -158,7 +158,8 @@ async def test_engine():
                 END IF;
             END
             $$
-        """))
+        """)
+        )
         # Grant privileges to the test role
         await conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO test_rls_user"))
         await conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO test_rls_user"))
@@ -174,29 +175,37 @@ async def test_engine():
 
         # Drop existing policies if they exist (for idempotency)
         await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_templates ON templates"))
-        await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_evaluations ON evaluations"))
+        await conn.execute(
+            text("DROP POLICY IF EXISTS tenant_isolation_evaluations ON evaluations")
+        )
         await conn.execute(text("DROP POLICY IF EXISTS tenant_isolation_api_keys ON api_keys"))
 
         # Create RLS policies (NULLIF handles empty strings gracefully)
         # Using WITH CHECK allows INSERTs that match the tenant context
-        await conn.execute(text("""
+        await conn.execute(
+            text("""
             CREATE POLICY tenant_isolation_templates ON templates
                 FOR ALL
                 USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
                 WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-        """))
-        await conn.execute(text("""
+        """)
+        )
+        await conn.execute(
+            text("""
             CREATE POLICY tenant_isolation_evaluations ON evaluations
                 FOR ALL
                 USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
                 WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-        """))
-        await conn.execute(text("""
+        """)
+        )
+        await conn.execute(
+            text("""
             CREATE POLICY tenant_isolation_api_keys ON api_keys
                 FOR ALL
                 USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
                 WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-        """))
+        """)
+        )
 
     # Clean up test data before each test for isolation
     async with engine.begin() as conn:
@@ -313,10 +322,10 @@ async def test_client(
     - Uses the test database engine
     - Does NOT have authentication (use authenticated_client for that)
     """
-    from src.api.main import app
-    from src.api.deps import get_db_session
-    from src.services import rate_limiter
     from src import db
+    from src.api.deps import get_db_session
+    from src.api.main import app
+    from src.services import rate_limiter
 
     # Create a test session maker bound to our test engine
     test_session_maker = async_sessionmaker(
@@ -338,11 +347,13 @@ async def test_client(
 
     # Patch the audit module's reference to async_session_maker
     from src import audit
+
     original_audit_session_maker = audit.async_session_maker
     audit.async_session_maker = test_session_maker
 
     # Patch the auth module's reference to async_session_maker
     from src.api import auth
+
     original_auth_session_maker = auth.async_session_maker
     auth.async_session_maker = test_session_maker
 
@@ -380,11 +391,11 @@ async def authenticated_client(
     - Mocks Redis for rate limiting
     - Uses the test database engine for API endpoints
     """
-    from src.api.main import app
-    from src.api.auth import validate_api_key, AuthenticatedTenant
-    from src.api.deps import get_db_session, get_tenant_db
-    from src.services import rate_limiter
     from src import db
+    from src.api.auth import AuthenticatedTenant, validate_api_key
+    from src.api.deps import get_db_session, get_tenant_db
+    from src.api.main import app
+    from src.services import rate_limiter
 
     api_key_record, plain_key = test_api_key
 
@@ -416,6 +427,7 @@ async def authenticated_client(
     async def override_get_tenant_db():
         async with test_session_maker() as session:
             from sqlalchemy import text
+
             tenant_id_str = str(test_tenant.id)
             await session.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id_str}'"))
             yield session
@@ -430,11 +442,13 @@ async def authenticated_client(
 
     # Patch the audit module's reference to async_session_maker
     from src import audit
+
     original_audit_session_maker = audit.async_session_maker
     audit.async_session_maker = test_session_maker
 
     # Patch the auth module's reference to async_session_maker
     from src.api import auth
+
     original_auth_session_maker = auth.async_session_maker
     auth.async_session_maker = test_session_maker
 

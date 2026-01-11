@@ -2,7 +2,6 @@
 
 import pytest
 from pydantic import ValidationError
-from uuid import UUID
 
 from src.models import (
     BoundingBox,
@@ -338,9 +337,7 @@ class TestEvaluateRequest:
             latency_ms=100,
         )
 
-    def test_valid_evaluate_request(
-        self, valid_structural_features, valid_extractor_metadata
-    ):
+    def test_valid_evaluate_request(self, valid_structural_features, valid_extractor_metadata):
         """Valid evaluate request should be created."""
         request = EvaluateRequest(
             layout_fingerprint="a" * 64,
@@ -367,9 +364,7 @@ class TestEvaluateRequest:
             )
         assert "64" in str(exc_info.value)
 
-    def test_fingerprint_must_be_hex(
-        self, valid_structural_features, valid_extractor_metadata
-    ):
+    def test_fingerprint_must_be_hex(self, valid_structural_features, valid_extractor_metadata):
         """Layout fingerprint must be valid hexadecimal."""
         with pytest.raises(ValidationError) as exc_info:
             EvaluateRequest(
@@ -382,9 +377,7 @@ class TestEvaluateRequest:
             )
         assert "hexadecimal" in str(exc_info.value).lower()
 
-    def test_doc_hash_must_be_64_chars(
-        self, valid_structural_features, valid_extractor_metadata
-    ):
+    def test_doc_hash_must_be_64_chars(self, valid_structural_features, valid_extractor_metadata):
         """Client doc hash must be exactly 64 characters."""
         with pytest.raises(ValidationError):
             EvaluateRequest(

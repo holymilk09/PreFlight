@@ -1,14 +1,12 @@
 """Tests for security utilities."""
 
-import pytest
-
 from src.security import (
     APIKeyComponents,
     generate_api_key,
-    hash_api_key,
-    verify_api_key,
     generate_request_id,
+    hash_api_key,
     sanitize_for_log,
+    verify_api_key,
 )
 
 
@@ -168,7 +166,7 @@ class TestSanitizeForLog:
         result = sanitize_for_log(data)
 
         assert "REDACTED" in result["api_key"]
-        assert "cp_a...REDACTED" == result["api_key"]
+        assert result["api_key"] == "cp_a...REDACTED"
 
     def test_sanitize_removes_token(self):
         """Token fields should be redacted."""

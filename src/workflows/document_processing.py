@@ -106,9 +106,7 @@ class DocumentProcessingWorkflow:
                 drift_score=0.0,
                 reliability_score=0.0,
                 correction_rules=[],
-                replay_hash=self._generate_replay_hash(
-                    input.client_doc_hash, Decision.NEW.value
-                ),
+                replay_hash=self._generate_replay_hash(input.client_doc_hash, Decision.NEW.value),
                 alerts=[],
             )
 
@@ -171,9 +169,7 @@ class DocumentProcessingWorkflow:
             drift_score=drift_score,
             reliability_score=reliability_score,
             correction_rules=correction_rules,
-            replay_hash=self._generate_replay_hash(
-                input.client_doc_hash, decision.value
-            ),
+            replay_hash=self._generate_replay_hash(input.client_doc_hash, decision.value),
             alerts=alerts,
         )
 
@@ -181,6 +177,4 @@ class DocumentProcessingWorkflow:
         """Generate a deterministic replay hash."""
         # Use workflow info for unique but deterministic ID
         workflow_id = workflow.info().workflow_id
-        return hashlib.sha256(
-            f"{workflow_id}:{doc_hash}:{decision}".encode()
-        ).hexdigest()
+        return hashlib.sha256(f"{workflow_id}:{doc_hash}:{decision}".encode()).hexdigest()

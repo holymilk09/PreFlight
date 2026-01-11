@@ -32,7 +32,8 @@ if settings.sentry_dsn:
         send_default_pii=False,
         # Filter out health check endpoints from traces
         traces_sampler=lambda ctx: (
-            0.0 if ctx.get("wsgi_environ", {}).get("PATH_INFO") in ("/health", "/metrics", "/")
+            0.0
+            if ctx.get("wsgi_environ", {}).get("PATH_INFO") in ("/health", "/metrics", "/")
             else settings.sentry_traces_sample_rate
         ),
     )
@@ -96,9 +97,7 @@ async def security_headers_middleware(request: Request, call_next: Any) -> Respo
 
     # HSTS hint (actual enforcement should be at load balancer/proxy level)
     if request.url.scheme == "https":
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=31536000; includeSubDomains"
-        )
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
     return response
 

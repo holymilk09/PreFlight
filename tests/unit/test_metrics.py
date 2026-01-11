@@ -1,8 +1,5 @@
 """Unit tests for Prometheus metrics."""
 
-import pytest
-from prometheus_client import REGISTRY
-
 from src.metrics import (
     AUTH_FAILURES,
     DRIFT_SCORE,
@@ -181,11 +178,14 @@ class TestRequestMetrics:
             status=200,
         ).inc()
 
-        assert REQUEST_COUNT.labels(
-            endpoint="/health",
-            method="GET",
-            status=200,
-        )._value.get() == initial + 1
+        assert (
+            REQUEST_COUNT.labels(
+                endpoint="/health",
+                method="GET",
+                status=200,
+            )._value.get()
+            == initial + 1
+        )
 
     def test_request_latency_observe(self):
         """REQUEST_LATENCY should record observations."""

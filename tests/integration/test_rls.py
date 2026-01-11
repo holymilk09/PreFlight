@@ -5,16 +5,17 @@ RLS is a critical security feature for multi-tenant SaaS.
 """
 
 import pytest
-from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.models import APIKey, Tenant, Template, TemplateStatus
+from src.models import APIKey, Tenant
 from src.security import generate_api_key
 
-
 # RLS test database URL - uses a non-superuser to ensure RLS is enforced
-RLS_TEST_DATABASE_URL = "postgresql+asyncpg://test_rls_user:test_rls_password@localhost:5432/control_plane_test"
+RLS_TEST_DATABASE_URL = (
+    "postgresql+asyncpg://test_rls_user:test_rls_password@localhost:5432/control_plane_test"
+)
 
 
 class TestRLSTenantIsolation:
@@ -34,11 +35,11 @@ class TestRLSTenantIsolation:
         Note: Uses a non-superuser database connection to ensure RLS policies
         are enforced. Superusers bypass all RLS policies in PostgreSQL.
         """
-        from src.api.main import app
-        from src.api.auth import validate_api_key, AuthenticatedTenant
-        from src.api.deps import get_db_session, get_tenant_db
-        from src.services import rate_limiter
         from src import db
+        from src.api.auth import AuthenticatedTenant, validate_api_key
+        from src.api.deps import get_db_session, get_tenant_db
+        from src.api.main import app
+        from src.services import rate_limiter
 
         # Create an engine using the non-superuser for RLS enforcement
         rls_engine = create_async_engine(
@@ -149,11 +150,13 @@ class TestRLSTenantIsolation:
 
         # Patch the audit module's reference to async_session_maker
         from src import audit
+
         original_audit_session_maker = audit.async_session_maker
         audit.async_session_maker = test_session_maker
 
         # Patch the auth module's reference to async_session_maker
         from src.api import auth as auth_module
+
         original_auth_session_maker = auth_module.async_session_maker
         auth_module.async_session_maker = test_session_maker
 
@@ -216,7 +219,9 @@ class TestRLSTenantIsolation:
                 "baseline_reliability": 0.85,
             }
             response_b = await client_b.post("/v1/templates", json=template_data)
-            assert response_b.status_code == 201, f"Expected 201, got {response_b.status_code}: {response_b.text}"
+            assert response_b.status_code == 201, (
+                f"Expected 201, got {response_b.status_code}: {response_b.text}"
+            )
             template_id = response_b.json()["id"]
 
         # Tenant A lists templates - should be empty
@@ -248,7 +253,9 @@ class TestRLSTenantIsolation:
                 "baseline_reliability": 0.90,
             }
             response_a = await client_a.post("/v1/templates", json=template_data)
-            assert response_a.status_code == 201, f"Expected 201, got {response_a.status_code}: {response_a.text}"
+            assert response_a.status_code == 201, (
+                f"Expected 201, got {response_a.status_code}: {response_a.text}"
+            )
 
         # Tenant B lists templates - should be empty
         async with await clients.client_b() as client_b:
@@ -275,7 +282,9 @@ class TestRLSTenantIsolation:
                 "baseline_reliability": 0.85,
             }
             response = await client_a.post("/v1/templates", json=template_a)
-            assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+            assert response.status_code == 201, (
+                f"Expected 201, got {response.status_code}: {response.text}"
+            )
 
         # Tenant B creates a template
         async with await clients.client_b() as client_b:
@@ -286,19 +295,25 @@ class TestRLSTenantIsolation:
                 "baseline_reliability": 0.90,
             }
             response = await client_b.post("/v1/templates", json=template_b)
-            assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
+            assert response.status_code == 201, (
+                f"Expected 201, got {response.status_code}: {response.text}"
+            )
 
         # Each tenant should see exactly one template
         async with await clients.client_a() as client_a:
             response_a = await client_a.get("/v1/templates")
             assert response_a.status_code == 200
-            assert len(response_a.json()) == 1, f"Expected 1 template for A, got {len(response_a.json())}"
+            assert len(response_a.json()) == 1, (
+                f"Expected 1 template for A, got {len(response_a.json())}"
+            )
             assert response_a.json()[0]["template_id"] == "TEMPLATE-A"
 
         async with await clients.client_b() as client_b:
             response_b = await client_b.get("/v1/templates")
             assert response_b.status_code == 200
-            assert len(response_b.json()) == 1, f"Expected 1 template for B, got {len(response_b.json())}"
+            assert len(response_b.json()) == 1, (
+                f"Expected 1 template for B, got {len(response_b.json())}"
+            )
             assert response_b.json()[0]["template_id"] == "TEMPLATE-B"
 
     @pytest.mark.asyncio
@@ -320,12 +335,16 @@ class TestRLSTenantIsolation:
         # Both tenants create template with same ID
         async with await clients.client_a() as client_a:
             response_a = await client_a.post("/v1/templates", json=template_data)
-            assert response_a.status_code == 201, f"Expected 201, got {response_a.status_code}: {response_a.text}"
+            assert response_a.status_code == 201, (
+                f"Expected 201, got {response_a.status_code}: {response_a.text}"
+            )
             id_a = response_a.json()["id"]
 
         async with await clients.client_b() as client_b:
             response_b = await client_b.post("/v1/templates", json=template_data)
-            assert response_b.status_code == 201, f"Expected 201, got {response_b.status_code}: {response_b.text}"
+            assert response_b.status_code == 201, (
+                f"Expected 201, got {response_b.status_code}: {response_b.text}"
+            )
             id_b = response_b.json()["id"]
 
         # UUIDs should be different
@@ -354,12 +373,12 @@ class TestRLSEvaluationIsolation:
             "baseline_reliability": 0.85,
         }
         template_response = await authenticated_client.post("/v1/templates", json=template_data)
-        assert template_response.status_code == 201, f"Expected 201, got {template_response.status_code}: {template_response.text}"
+        assert template_response.status_code == 201, (
+            f"Expected 201, got {template_response.status_code}: {template_response.text}"
+        )
 
         # Create matching fingerprint
-        features_json = json.dumps(
-            sample_structural_features.model_dump(), sort_keys=True
-        )
+        features_json = json.dumps(sample_structural_features.model_dump(), sort_keys=True)
         fingerprint = hashlib.sha256(features_json.encode()).hexdigest()
 
         # Make an evaluation request
@@ -379,7 +398,9 @@ class TestRLSEvaluationIsolation:
         }
 
         response = await authenticated_client.post("/v1/evaluate", json=eval_request)
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text}"
+        )
 
         # Verify response has expected fields
         data = response.json()

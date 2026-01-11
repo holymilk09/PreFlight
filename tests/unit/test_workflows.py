@@ -1,20 +1,17 @@
 """Unit tests for Temporal workflows."""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
-
 from uuid_extensions import uuid7
 
-from src.models import Decision, StructuralFeatures, ExtractorMetadata, TemplateStatus
+from src.models import Decision, TemplateStatus
 from src.workflows.activities import (
-    MatchTemplateInput,
-    MatchTemplateOutput,
     ComputeDriftInput,
     ComputeReliabilityInput,
+    MatchTemplateInput,
+    MatchTemplateOutput,
     SelectRulesInput,
-    _template_to_dict,
     _dict_to_template,
+    _template_to_dict,
 )
 from src.workflows.document_processing import (
     DocumentProcessingInput,
@@ -210,13 +207,6 @@ class TestWorkerConfiguration:
             create_worker,
             run_worker,
         )
-        from src.workflows.document_processing import DocumentProcessingWorkflow
-        from src.workflows.activities import (
-            match_template_activity,
-            compute_drift_activity,
-            compute_reliability_activity,
-            select_rules_activity,
-        )
 
         # Verify all components are importable
         assert TASK_QUEUE == "preflight-tasks"
@@ -231,9 +221,9 @@ class TestWorkflowModuleExports:
         """__init__.py should export all public components."""
         from src.workflows import (
             DocumentProcessingWorkflow,
-            match_template_activity,
             compute_drift_activity,
             compute_reliability_activity,
+            match_template_activity,
             select_rules_activity,
         )
 

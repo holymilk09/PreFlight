@@ -1,9 +1,9 @@
 """Integration tests for API authentication."""
 
-import pytest
 from datetime import datetime
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock
 
+import pytest
 from httpx import AsyncClient
 
 
@@ -71,9 +71,9 @@ class TestAPIKeyAuthentication:
         test_engine,
     ):
         """Revoked API key should return 401."""
-        from datetime import datetime
         from sqlalchemy import update
-        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
         from src.models import APIKey
 
         api_key_record, plain_key = test_api_key
@@ -82,7 +82,11 @@ class TestAPIKeyAuthentication:
         session_maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
         async with session_maker() as session:
             # Revoke the key via UPDATE statement
-            stmt = update(APIKey).where(APIKey.id == api_key_record.id).values(revoked_at=datetime.utcnow())
+            stmt = (
+                update(APIKey)
+                .where(APIKey.id == api_key_record.id)
+                .values(revoked_at=datetime.utcnow())
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -100,8 +104,9 @@ class TestAuthenticatedTenant:
 
     def test_has_scope_direct_match(self):
         """has_scope should return True for direct scope match."""
-        from src.api.auth import AuthenticatedTenant
         from uuid_extensions import uuid7
+
+        from src.api.auth import AuthenticatedTenant
 
         tenant = AuthenticatedTenant(
             tenant_id=uuid7(),
@@ -118,8 +123,9 @@ class TestAuthenticatedTenant:
 
     def test_has_scope_wildcard(self):
         """has_scope should return True for wildcard scope."""
-        from src.api.auth import AuthenticatedTenant
         from uuid_extensions import uuid7
+
+        from src.api.auth import AuthenticatedTenant
 
         tenant = AuthenticatedTenant(
             tenant_id=uuid7(),
@@ -136,8 +142,9 @@ class TestAuthenticatedTenant:
 
     def test_has_scope_empty_scopes(self):
         """has_scope should return False for empty scopes."""
-        from src.api.auth import AuthenticatedTenant
         from uuid_extensions import uuid7
+
+        from src.api.auth import AuthenticatedTenant
 
         tenant = AuthenticatedTenant(
             tenant_id=uuid7(),
@@ -196,9 +203,10 @@ class TestAuthFailedLogging:
         test_engine,
     ):
         """Invalid API key should log a failed authentication attempt."""
-        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
         from sqlalchemy import select
-        from src.models import AuditLog, AuditAction
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        from src.models import AuditAction, AuditLog
 
         # Make request with invalid key
         fake_key = "cp_" + "x" * 32
@@ -228,17 +236,21 @@ class TestAuthFailedLogging:
         test_engine,
     ):
         """Revoked API key should log a failed authentication attempt."""
-        from datetime import datetime
-        from sqlalchemy import update, select
-        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-        from src.models import APIKey, AuditLog, AuditAction
+        from sqlalchemy import select, update
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        from src.models import APIKey, AuditAction, AuditLog
 
         api_key_record, plain_key = test_api_key
 
         # Revoke the key
         session_maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
         async with session_maker() as session:
-            stmt = update(APIKey).where(APIKey.id == api_key_record.id).values(revoked_at=datetime.utcnow())
+            stmt = (
+                update(APIKey)
+                .where(APIKey.id == api_key_record.id)
+                .values(revoked_at=datetime.utcnow())
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -270,9 +282,9 @@ class TestAPIKeyLastUsedUpdate:
         test_engine,
     ):
         """Valid API key usage should update last_used_at timestamp."""
-        from datetime import datetime
         from sqlalchemy import select
-        from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
         from src.models import APIKey
 
         api_key_record, plain_key = test_api_key

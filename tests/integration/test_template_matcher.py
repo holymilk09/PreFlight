@@ -1,7 +1,6 @@
 """Integration tests for template matching service with database."""
 
 import hashlib
-import json
 
 import pytest
 from sqlalchemy import text
@@ -24,14 +23,13 @@ class TestMatchTemplateDatabase:
         )
         async with session_maker() as session:
             # Set tenant context for RLS
-            await session.execute(
-                text(f"SET LOCAL app.tenant_id = '{test_tenant.id}'")
-            )
+            await session.execute(text(f"SET LOCAL app.tenant_id = '{test_tenant.id}'"))
             yield session
 
     @pytest.fixture
     def make_template(self, test_tenant, sample_structural_features):
         """Factory fixture to create templates with specified features."""
+
         def _make_template(
             template_id: str = "TEST-TEMPLATE",
             version: str = "1.0",
@@ -55,6 +53,7 @@ class TestMatchTemplateDatabase:
                 correction_rules=[],
                 status=status,
             )
+
         return _make_template
 
     @pytest.mark.asyncio

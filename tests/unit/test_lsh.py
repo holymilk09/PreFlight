@@ -1,15 +1,14 @@
 """Unit tests for LSH (Locality-Sensitive Hashing) implementation."""
 
-import pytest
 from uuid_extensions import uuid7
 
 from src.models import StructuralFeatures
 from src.services.lsh_utils import (
     NUM_HASHES,
-    features_to_shingles,
     compute_minhash_signature,
-    minhash_signature,
     estimate_jaccard_similarity,
+    features_to_shingles,
+    minhash_signature,
     signature_to_bands,
 )
 
@@ -300,7 +299,7 @@ class TestLSHIndexHelpers:
 
     def test_signature_bytes_roundtrip(self):
         """Signature should survive bytes roundtrip."""
-        from src.services.lsh_index import _signature_to_bytes, _bytes_to_signature
+        from src.services.lsh_index import _bytes_to_signature, _signature_to_bytes
 
         original = (1, 2, 3, 4, 5, 100, 1000, 10000)
         bytes_data = _signature_to_bytes(original)
@@ -334,6 +333,7 @@ class TestTemplateMatcher:
     def test_match_template_has_use_lsh_param(self):
         """match_template should have use_lsh parameter."""
         import inspect
+
         from src.services.template_matcher import match_template
 
         sig = inspect.signature(match_template)

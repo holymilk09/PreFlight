@@ -1,9 +1,9 @@
 """Tests for audit logging utilities."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
-from datetime import datetime
+
+import pytest
 
 from src.models import AuditAction, AuditLog
 
@@ -104,7 +104,6 @@ class TestLogAuditEvent:
     @pytest.mark.asyncio
     async def test_log_audit_event_sanitizes_details(self):
         """Sensitive data in details should be sanitized."""
-        from src.audit import log_audit_event
         from src.security import sanitize_for_log
 
         details = {"api_key": "cp_secret123456789012345678901234"}

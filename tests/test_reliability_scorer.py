@@ -1,13 +1,14 @@
 """Tests for reliability scoring service."""
 
-import pytest
 import math
 
+import pytest
+
+from src.models import ExtractorMetadata
 from src.services.reliability_scorer import (
     compute_reliability_score,
     get_reliability_breakdown,
 )
-from src.models import ExtractorMetadata
 
 
 class TestComputeReliabilityScore:
@@ -27,9 +28,7 @@ class TestComputeReliabilityScore:
         assert reliability > 0.85
 
     @pytest.mark.asyncio
-    async def test_low_reliability_poor_conditions(
-        self, sample_template, low_confidence_extractor
-    ):
+    async def test_low_reliability_poor_conditions(self, sample_template, low_confidence_extractor):
         """Poor conditions should produce low reliability."""
         reliability = await compute_reliability_score(
             template=sample_template,
@@ -121,9 +120,7 @@ class TestComputeReliabilityScore:
         assert reliability_high > reliability_normal
 
     @pytest.mark.asyncio
-    async def test_reliability_bounds(
-        self, sample_template, low_confidence_extractor
-    ):
+    async def test_reliability_bounds(self, sample_template, low_confidence_extractor):
         """Reliability should always be between 0 and 1."""
         # Test with worst case
         reliability = await compute_reliability_score(
@@ -152,9 +149,7 @@ class TestComputeReliabilityScore:
 class TestGetReliabilityBreakdown:
     """Tests for reliability breakdown details."""
 
-    def test_breakdown_structure(
-        self, sample_template, sample_extractor_metadata
-    ):
+    def test_breakdown_structure(self, sample_template, sample_extractor_metadata):
         """Verify breakdown has expected structure."""
         breakdown = get_reliability_breakdown(
             template=sample_template,
@@ -178,14 +173,10 @@ class TestGetReliabilityBreakdown:
             drift_score=0.1,
         )
 
-        total_weight = sum(
-            c["weight"] for c in breakdown["components"].values()
-        )
+        total_weight = sum(c["weight"] for c in breakdown["components"].values())
         assert total_weight == pytest.approx(1.0, abs=0.01)
 
-    def test_breakdown_known_extractor(
-        self, sample_template, sample_extractor_metadata
-    ):
+    def test_breakdown_known_extractor(self, sample_template, sample_extractor_metadata):
         """Verify known extractor is correctly identified."""
         breakdown = get_reliability_breakdown(
             template=sample_template,

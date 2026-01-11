@@ -8,11 +8,9 @@ Paper: https://arxiv.org/abs/1905.13538
 """
 
 import hashlib
-from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 from src.models import BoundingBox, StructuralFeatures
-
 from tests.fixtures.datasets.loader import (
     DatasetLoader,
     DocumentSample,
@@ -122,9 +120,7 @@ class FUNSDLoader(DatasetLoader):
         entity_counts = self._count_entities(item)
 
         # Compute structural features
-        has_header, has_footer = detect_header_footer(
-            bboxes, self.DEFAULT_PAGE_HEIGHT
-        )
+        has_header, has_footer = detect_header_footer(bboxes, self.DEFAULT_PAGE_HEIGHT)
 
         features = StructuralFeatures(
             element_count=len(bboxes),
@@ -205,15 +201,17 @@ class FUNSDLoader(DatasetLoader):
             norm_w = max(0.0, min(1.0, (x2 - x1) / self.DEFAULT_PAGE_WIDTH))
             norm_h = max(0.0, min(1.0, (y2 - y1) / self.DEFAULT_PAGE_HEIGHT))
 
-            bboxes.append(BoundingBox(
-                x=norm_x,
-                y=norm_y,
-                width=norm_w,
-                height=norm_h,
-                element_type="text",  # FUNSD is all text elements
-                confidence=0.95,  # Assumed high confidence for ground truth
-                reading_order=i,
-            ))
+            bboxes.append(
+                BoundingBox(
+                    x=norm_x,
+                    y=norm_y,
+                    width=norm_w,
+                    height=norm_h,
+                    element_type="text",  # FUNSD is all text elements
+                    confidence=0.95,  # Assumed high confidence for ground truth
+                    reading_order=i,
+                )
+            )
 
         return bboxes
 

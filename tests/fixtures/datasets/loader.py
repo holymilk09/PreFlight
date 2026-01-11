@@ -1,9 +1,9 @@
 """Base dataset loader for document extraction validation."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 from src.models import BoundingBox, StructuralFeatures
 
@@ -19,6 +19,7 @@ class DocumentSample:
         category: Document category/type if available
         metadata: Additional dataset-specific metadata
     """
+
     id: str
     source_dataset: str
     features: StructuralFeatures
@@ -81,6 +82,7 @@ class DatasetLoader(ABC):
     def clear_cache(self) -> None:
         """Remove cached dataset files."""
         import shutil
+
         cache_path = self.cache_dir / self.name
         if cache_path.exists():
             shutil.rmtree(cache_path)
@@ -109,10 +111,7 @@ def compute_text_density(
 
     # BoundingBox uses normalized coordinates (0-1), so width * height
     # gives us the fraction of page area covered by each box
-    text_area = sum(
-        (bbox.width or 0) * (bbox.height or 0)
-        for bbox in bboxes
-    )
+    text_area = sum((bbox.width or 0) * (bbox.height or 0) for bbox in bboxes)
 
     # Cap at 1.0 (overlapping boxes can exceed page area)
     return min(text_area, 1.0)
@@ -166,7 +165,7 @@ def compute_layout_complexity(
         spread_factor = 0.0
 
     # Combine factors
-    complexity = (count_factor * 0.4 + variance_factor * 0.3 + spread_factor * 0.3)
+    complexity = count_factor * 0.4 + variance_factor * 0.3 + spread_factor * 0.3
     return min(complexity, 1.0)
 
 
@@ -195,7 +194,7 @@ def detect_columns(bboxes: list[BoundingBox], page_width: int) -> int:
     columns = 1
 
     for i in range(1, len(left_edges)):
-        if left_edges[i] - left_edges[i-1] > gap_threshold:
+        if left_edges[i] - left_edges[i - 1] > gap_threshold:
             columns += 1
             if columns >= 4:
                 break

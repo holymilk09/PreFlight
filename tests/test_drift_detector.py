@@ -2,25 +2,21 @@
 
 import pytest
 
-from src.services.drift_detector import compute_drift_score, get_drift_details
 from src.models import StructuralFeatures
+from src.services.drift_detector import compute_drift_score, get_drift_details
 
 
 class TestComputeDriftScore:
     """Tests for drift score computation."""
 
     @pytest.mark.asyncio
-    async def test_no_drift_identical_features(
-        self, sample_template, sample_structural_features
-    ):
+    async def test_no_drift_identical_features(self, sample_template, sample_structural_features):
         """Identical features should have zero drift."""
         drift = await compute_drift_score(sample_template, sample_structural_features)
         assert drift == pytest.approx(0.0, abs=0.01)
 
     @pytest.mark.asyncio
-    async def test_high_drift_different_features(
-        self, sample_template, high_drift_features
-    ):
+    async def test_high_drift_different_features(self, sample_template, high_drift_features):
         """Very different features should have high drift."""
         drift = await compute_drift_score(sample_template, high_drift_features)
         # Should trigger critical drift (> 0.50)

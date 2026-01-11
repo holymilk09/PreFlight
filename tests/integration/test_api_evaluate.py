@@ -329,7 +329,9 @@ class TestEvaluateDecisionLogic:
         modified_features["element_count"] = int(modified_features["element_count"] * 1.5)
         modified_features["table_count"] += 2
         modified_features["text_density"] = min(1.0, modified_features["text_density"] + 0.2)
-        modified_features["layout_complexity"] = min(1.0, modified_features["layout_complexity"] + 0.15)
+        modified_features["layout_complexity"] = min(
+            1.0, modified_features["layout_complexity"] + 0.15
+        )
 
         eval_request = {
             "layout_fingerprint": "3" * 64,  # Different fingerprint
@@ -479,6 +481,7 @@ class TestEvaluateDecisionLogic:
 
         import hashlib
         import json
+
         features_json = json.dumps(sample_structural_features.model_dump(), sort_keys=True)
         fingerprint = hashlib.sha256(features_json.encode()).hexdigest()
 
@@ -527,6 +530,7 @@ class TestEvaluateDecisionLogic:
 
         import hashlib
         import json
+
         features_json = json.dumps(sample_structural_features.model_dump(), sort_keys=True)
         fingerprint = hashlib.sha256(features_json.encode()).hexdigest()
 
@@ -561,6 +565,7 @@ class TestEvaluateDecisionLogic:
     ):
         """Processing should complete in reasonable time."""
         import time
+
         start = time.perf_counter()
 
         response = await authenticated_client.post(

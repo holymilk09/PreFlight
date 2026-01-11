@@ -1,13 +1,12 @@
 """Tests for template matching service."""
 
 import pytest
-import math
 
-from src.services.template_matcher import (
-    _extract_feature_vector,
-    _cosine_similarity,
-)
 from src.models import StructuralFeatures
+from src.services.template_matcher import (
+    _cosine_similarity,
+    _extract_feature_vector,
+)
 
 
 class TestFeatureVectorExtraction:
@@ -122,9 +121,7 @@ class TestFeatureSimilarity:
         vec = _extract_feature_vector(sample_structural_features)
         assert _cosine_similarity(vec, vec) == pytest.approx(1.0, abs=0.0001)
 
-    def test_different_features(
-        self, sample_structural_features, high_drift_features
-    ):
+    def test_different_features(self, sample_structural_features, high_drift_features):
         """Very different features should have lower similarity."""
         vec_a = _extract_feature_vector(sample_structural_features)
         vec_b = _extract_feature_vector(high_drift_features)

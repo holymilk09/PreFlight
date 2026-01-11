@@ -2,14 +2,14 @@
 
 import pytest
 
-from src.services.correction_rules import (
-    select_correction_rules,
-    get_available_rules,
-    validate_correction_rules,
-    _has_rule,
-    STANDARD_RULES,
-)
 from src.models import CorrectionRule
+from src.services.correction_rules import (
+    STANDARD_RULES,
+    _has_rule,
+    get_available_rules,
+    select_correction_rules,
+    validate_correction_rules,
+)
 
 
 class TestSelectCorrectionRules:
