@@ -14,9 +14,9 @@ import structlog
 from src.models import StructuralFeatures
 from src.services.lsh_utils import (
     NUM_HASHES,
+    estimate_jaccard_similarity,
     minhash_signature,
     signature_to_bands,
-    estimate_jaccard_similarity,
 )
 
 logger = structlog.get_logger()

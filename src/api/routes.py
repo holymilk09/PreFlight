@@ -10,19 +10,23 @@ from uuid_extensions import uuid7
 
 from src.api.auth import CurrentTenant
 from src.api.deps import TenantDbSession
-from src.audit import log_evaluation_requested, log_template_created
+from src.audit import log_audit_event, log_evaluation_requested, log_template_created
 from src.metrics import record_evaluation
 from src.models import (
+    AuditAction,
+    CorrectionRule,
     Decision,
     DetailedHealthResponse,
-    Evaluation,
     EvaluateRequest,
     EvaluateResponse,
+    Evaluation,
     ServiceStatus,
     Template,
     TemplateCreate,
     TemplateResponse,
     TemplateStatus,
+    TemplateStatusUpdate,
+    TemplateUpdate,
 )
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
@@ -335,6 +339,223 @@ async def get_template(
     )
 
 
+@router.put(
+    "/templates/{template_id}",
+    response_model=TemplateResponse,
+    tags=["Templates"],
+    summary="Update template",
+)
+async def update_template(
+    request: Request,
+    template_id: UUID,
+    body: TemplateUpdate,
+    tenant: CurrentTenant,
+    db: TenantDbSession,
+) -> TemplateResponse:
+    """Update a template's configurable fields.
+
+    Only baseline_reliability and correction_rules can be updated.
+    RLS ensures the template belongs to the authenticated tenant.
+    """
+    stmt = select(Template).where(Template.id == template_id)
+    result = await db.execute(stmt)
+    template = result.scalar_one_or_none()
+
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+
+    # Track what fields were updated
+    updated_fields: dict[str, object] = {}
+
+    if body.baseline_reliability is not None:
+        updated_fields["baseline_reliability"] = {
+            "old": template.baseline_reliability,
+            "new": body.baseline_reliability,
+        }
+        template.baseline_reliability = body.baseline_reliability
+
+    if body.correction_rules is not None:
+        updated_fields["correction_rules"] = {"count": len(body.correction_rules)}
+        template.correction_rules = [r.model_dump() for r in body.correction_rules]
+
+    if not updated_fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update",
+        )
+
+    db.add(template)
+    await db.commit()
+
+    # Log audit event
+    await log_audit_event(
+        action=AuditAction.TEMPLATE_UPDATED,
+        tenant_id=tenant.tenant_id,
+        actor_id=tenant.api_key_id,
+        resource_type="template",
+        resource_id=template.id,
+        details={
+            "template_id": template.template_id,
+            "version": template.version,
+            "updated_fields": updated_fields,
+        },
+        ip_address=request.client.host if request.client else None,
+        request_id=UUID(request.state.request_id) if hasattr(request.state, "request_id") else None,
+    )
+
+    # Parse correction rules from stored JSON
+    correction_rules = [
+        CorrectionRule(**r) for r in (template.correction_rules or [])
+    ]
+
+    return TemplateResponse(
+        id=template.id,
+        template_id=template.template_id,
+        version=template.version,
+        fingerprint=template.fingerprint,
+        baseline_reliability=template.baseline_reliability,
+        status=template.status,
+        created_at=template.created_at,
+        correction_rules=correction_rules,
+    )
+
+
+@router.delete(
+    "/templates/{template_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Templates"],
+    summary="Deprecate template",
+)
+async def delete_template(
+    request: Request,
+    template_id: UUID,
+    tenant: CurrentTenant,
+    db: TenantDbSession,
+) -> None:
+    """Deprecate a template (soft delete).
+
+    The template is not actually deleted, but its status is changed to DEPRECATED.
+    Deprecated templates are not used for matching new documents.
+    RLS ensures the template belongs to the authenticated tenant.
+    """
+    stmt = select(Template).where(Template.id == template_id)
+    result = await db.execute(stmt)
+    template = result.scalar_one_or_none()
+
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+
+    if template.status == TemplateStatus.DEPRECATED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Template is already deprecated",
+        )
+
+    old_status = template.status
+    template.status = TemplateStatus.DEPRECATED
+    db.add(template)
+    await db.commit()
+
+    # Log audit event
+    await log_audit_event(
+        action=AuditAction.TEMPLATE_DEPRECATED,
+        tenant_id=tenant.tenant_id,
+        actor_id=tenant.api_key_id,
+        resource_type="template",
+        resource_id=template.id,
+        details={
+            "template_id": template.template_id,
+            "version": template.version,
+            "old_status": old_status.value,
+        },
+        ip_address=request.client.host if request.client else None,
+        request_id=UUID(request.state.request_id) if hasattr(request.state, "request_id") else None,
+    )
+
+
+@router.patch(
+    "/templates/{template_id}/status",
+    response_model=TemplateResponse,
+    tags=["Templates"],
+    summary="Change template status",
+)
+async def update_template_status(
+    request: Request,
+    template_id: UUID,
+    body: TemplateStatusUpdate,
+    tenant: CurrentTenant,
+    db: TenantDbSession,
+) -> TemplateResponse:
+    """Change a template's status.
+
+    Valid transitions:
+    - ACTIVE -> DEPRECATED, REVIEW
+    - REVIEW -> ACTIVE, DEPRECATED
+    - DEPRECATED -> ACTIVE (re-activation)
+
+    RLS ensures the template belongs to the authenticated tenant.
+    """
+    stmt = select(Template).where(Template.id == template_id)
+    result = await db.execute(stmt)
+    template = result.scalar_one_or_none()
+
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Template not found",
+        )
+
+    if template.status == body.status:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Template is already in {body.status.value} status",
+        )
+
+    old_status = template.status
+    template.status = body.status
+    db.add(template)
+    await db.commit()
+
+    # Log audit event
+    await log_audit_event(
+        action=AuditAction.TEMPLATE_STATUS_CHANGED,
+        tenant_id=tenant.tenant_id,
+        actor_id=tenant.api_key_id,
+        resource_type="template",
+        resource_id=template.id,
+        details={
+            "template_id": template.template_id,
+            "version": template.version,
+            "old_status": old_status.value,
+            "new_status": body.status.value,
+        },
+        ip_address=request.client.host if request.client else None,
+        request_id=UUID(request.state.request_id) if hasattr(request.state, "request_id") else None,
+    )
+
+    # Parse correction rules from stored JSON
+    correction_rules = [
+        CorrectionRule(**r) for r in (template.correction_rules or [])
+    ]
+
+    return TemplateResponse(
+        id=template.id,
+        template_id=template.template_id,
+        version=template.version,
+        fingerprint=template.fingerprint,
+        baseline_reliability=template.baseline_reliability,
+        status=template.status,
+        created_at=template.created_at,
+        correction_rules=correction_rules,
+    )
+
+
 # -----------------------------------------------------------------------------
 # Status Endpoint (Authenticated)
 # -----------------------------------------------------------------------------
@@ -356,6 +577,7 @@ async def get_status(
     returns detailed status of all dependencies (database, Redis).
     """
     from sqlalchemy import text
+
     from src.services.rate_limiter import get_redis_client
 
     services: dict[str, ServiceStatus] = {}

@@ -11,12 +11,10 @@ from uuid import UUID
 from temporalio import activity
 
 from src.models import (
-    CorrectionRule,
     ExtractorMetadata,
     StructuralFeatures,
     Template,
 )
-
 
 # -----------------------------------------------------------------------------
 # Activity Input/Output Data Classes

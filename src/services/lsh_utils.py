@@ -6,7 +6,7 @@ enabling O(1) approximate nearest neighbor lookup.
 
 import hashlib
 import struct
-from typing import Sequence
+from collections.abc import Sequence
 
 from src.models import StructuralFeatures
 
@@ -176,7 +176,7 @@ def estimate_jaccard_similarity(sig1: Sequence[int], sig2: Sequence[int]) -> flo
     if len(sig1) != len(sig2):
         return 0.0
 
-    matches = sum(1 for a, b in zip(sig1, sig2) if a == b)
+    matches = sum(1 for a, b in zip(sig1, sig2, strict=False) if a == b)
     return matches / len(sig1)
 
 

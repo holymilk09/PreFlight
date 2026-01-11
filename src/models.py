@@ -6,11 +6,10 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import Field, field_validator
-from sqlmodel import Column, Field as SQLField, Relationship, SQLModel
-from sqlalchemy import Text
-from sqlalchemy.dialects.postgresql import INET, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlmodel import Column, Relationship, SQLModel
+from sqlmodel import Field as SQLField
 from uuid_extensions import uuid7
-
 
 # -----------------------------------------------------------------------------
 # Enums
@@ -42,6 +41,10 @@ class AuditAction(str, Enum):
     API_KEY_REVOKED = "api_key_revoked"
     TEMPLATE_CREATED = "template_created"
     TEMPLATE_UPDATED = "template_updated"
+    TEMPLATE_DEPRECATED = "template_deprecated"
+    TEMPLATE_STATUS_CHANGED = "template_status_changed"
+    TENANT_CREATED = "tenant_created"
+    TENANT_UPDATED = "tenant_updated"
     EVALUATION_REQUESTED = "evaluation_requested"
     AUTH_FAILED = "auth_failed"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
@@ -273,6 +276,19 @@ class TemplateResponse(SQLModel):
     status: TemplateStatus
     created_at: datetime
     correction_rules: list[CorrectionRule] = Field(default_factory=list)
+
+
+class TemplateUpdate(SQLModel):
+    """Request body for updating a template."""
+
+    baseline_reliability: float | None = Field(default=None, ge=0, le=1)
+    correction_rules: list[CorrectionRule] | None = Field(default=None)
+
+
+class TemplateStatusUpdate(SQLModel):
+    """Request body for updating template status."""
+
+    status: TemplateStatus
 
 
 class HealthResponse(SQLModel):

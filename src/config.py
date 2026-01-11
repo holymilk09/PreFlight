@@ -66,6 +66,22 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=1000, ge=1)
     rate_limit_unauthenticated: int = Field(default=10, ge=1)
 
+    # Sentry (Error Tracking)
+    sentry_dsn: str | None = Field(
+        default=None,
+        description="Sentry DSN for error tracking (optional, prod recommended)",
+    )
+    sentry_environment: str = Field(
+        default="development",
+        description="Sentry environment (development, staging, production)",
+    )
+    sentry_traces_sample_rate: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Sentry traces sample rate (0.0 to 1.0)",
+    )
+
     @field_validator("jwt_secret", "api_key_salt")
     @classmethod
     def validate_not_placeholder(cls, v: str, info: object) -> str:
@@ -82,8 +98,8 @@ class Settings(BaseSettings):
         for pattern in placeholder_patterns:
             if pattern.upper() in v_upper:
                 raise ValueError(
-                    f"Secret appears to be a placeholder. "
-                    f"Generate a secure value with: openssl rand -hex 32"
+                    "Secret appears to be a placeholder. "
+                    "Generate a secure value with: openssl rand -hex 32"
                 )
         return v
 

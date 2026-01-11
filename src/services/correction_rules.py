@@ -5,7 +5,6 @@ Deterministic rule selection based on template and reliability.
 
 from src.models import CorrectionRule, Template
 
-
 # Standard correction rules available in the system
 STANDARD_RULES = {
     "sum_line_items": CorrectionRule(

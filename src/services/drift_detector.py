@@ -4,7 +4,6 @@ MVP implementation: Z-score from baseline.
 Future: CUSUM charts, Prophet forecasting, PELT changepoint detection.
 """
 
-import math
 
 from src.models import StructuralFeatures, Template
 

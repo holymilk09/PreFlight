@@ -5,12 +5,39 @@ import time
 from contextlib import asynccontextmanager
 from typing import Any
 
+import sentry_sdk
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 from src.config import settings
+
+# -----------------------------------------------------------------------------
+# Sentry Error Tracking
+# -----------------------------------------------------------------------------
+
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.sentry_environment,
+        traces_sample_rate=settings.sentry_traces_sample_rate,
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            SqlalchemyIntegration(),
+        ],
+        # Don't send PII to Sentry
+        send_default_pii=False,
+        # Filter out health check endpoints from traces
+        traces_sampler=lambda ctx: (
+            0.0 if ctx.get("wsgi_environ", {}).get("PATH_INFO") in ("/health", "/metrics", "/")
+            else settings.sentry_traces_sample_rate
+        ),
+    )
+
+from src.db import async_session_maker, close_db, init_db
 from src.metrics import (
     REQUEST_COUNT,
     REQUEST_LATENCY,
@@ -18,7 +45,6 @@ from src.metrics import (
     get_metrics_content_type,
     record_rate_limit_hit,
 )
-from src.db import async_session_maker, close_db, init_db
 from src.models import AuditAction, AuditLog
 from src.security import generate_request_id, hash_api_key
 from src.services.rate_limiter import check_rate_limit, close_redis_client, get_redis_client
@@ -339,9 +365,11 @@ async def metrics() -> Response:
 # -----------------------------------------------------------------------------
 
 # Import routes after app is created to avoid circular imports
+from src.api.admin_routes import router as admin_router  # noqa: E402
 from src.api.routes import router as api_router  # noqa: E402
 
 app.include_router(api_router, prefix="/v1")
+app.include_router(admin_router, prefix="/v1")
 
 
 # -----------------------------------------------------------------------------

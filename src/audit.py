@@ -104,9 +104,7 @@ async def log_audit_event(
         log_context["details"] = safe_details
 
     # Log at appropriate level based on action type
-    if action == AuditAction.AUTH_FAILED:
-        logger.warning("audit_event", **log_context)
-    elif action == AuditAction.RATE_LIMIT_EXCEEDED:
+    if action == AuditAction.AUTH_FAILED or action == AuditAction.RATE_LIMIT_EXCEEDED:
         logger.warning("audit_event", **log_context)
     else:
         logger.info("audit_event", **log_context)

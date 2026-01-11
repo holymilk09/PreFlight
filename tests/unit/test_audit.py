@@ -19,6 +19,10 @@ class TestAuditAction:
             "api_key_revoked",
             "template_created",
             "template_updated",
+            "template_deprecated",
+            "template_status_changed",
+            "tenant_created",
+            "tenant_updated",
             "evaluation_requested",
             "auth_failed",
             "rate_limit_exceeded",
@@ -36,8 +40,8 @@ class TestAuditAction:
         assert action == "api_key_created"
 
     def test_audit_action_members(self):
-        """AuditAction should have 8 members."""
-        assert len(AuditAction) == 8
+        """AuditAction should have 12 members."""
+        assert len(AuditAction) == 12
 
 
 class TestAuditLog:

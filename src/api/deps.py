@@ -7,7 +7,7 @@ from fastapi import Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.auth import AuthenticatedTenant, CurrentTenant
+from src.api.auth import CurrentTenant
 from src.db import async_session_maker
 
 

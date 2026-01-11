@@ -12,7 +12,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
-    from src.models import CorrectionRule, Decision
+    from src.models import Decision
     from src.workflows.activities import (
         ComputeDriftInput,
         ComputeReliabilityInput,

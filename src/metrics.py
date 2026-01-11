@@ -4,7 +4,7 @@ Defines all metrics for monitoring API performance, evaluation decisions,
 template matching, and drift detection.
 """
 
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 # -----------------------------------------------------------------------------
 # Request Metrics
