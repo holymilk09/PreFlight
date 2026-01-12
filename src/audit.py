@@ -36,7 +36,7 @@ logger = structlog.get_logger()
 
 
 async def log_audit_event(
-    action: AuditAction,
+    action: AuditAction | str,
     tenant_id: UUID | None = None,
     actor_id: UUID | None = None,
     resource_type: str | None = None,
@@ -67,12 +67,15 @@ async def log_audit_event(
     # Sanitize details before logging
     safe_details = sanitize_for_log(details) if details else None
 
+    # Get action string value
+    action_str = action.value if isinstance(action, AuditAction) else action
+
     # Create audit log entry
     audit_entry = AuditLog(
         timestamp=datetime.utcnow(),
         tenant_id=tenant_id,
         actor_id=actor_id,
-        action=action,
+        action=action_str,
         resource_type=resource_type,
         resource_id=resource_id,
         details=safe_details,
@@ -91,7 +94,7 @@ async def log_audit_event(
 
     # Write to structured log
     log_context = {
-        "audit_action": action.value,
+        "audit_action": action_str,
         "tenant_id": str(tenant_id) if tenant_id else None,
         "actor_id": str(actor_id) if actor_id else None,
         "resource_type": resource_type,
@@ -104,7 +107,7 @@ async def log_audit_event(
         log_context["details"] = safe_details
 
     # Log at appropriate level based on action type
-    if action == AuditAction.AUTH_FAILED or action == AuditAction.RATE_LIMIT_EXCEEDED:
+    if action_str in (AuditAction.AUTH_FAILED.value, AuditAction.RATE_LIMIT_EXCEEDED.value):
         logger.warning("audit_event", **log_context)
     else:
         logger.info("audit_event", **log_context)

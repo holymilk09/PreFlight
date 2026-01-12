@@ -366,9 +366,11 @@ async def metrics() -> Response:
 # Import routes after app is created to avoid circular imports
 from src.api.admin_routes import router as admin_router  # noqa: E402
 from src.api.routes import router as api_router  # noqa: E402
+from src.api.user_auth import router as auth_router  # noqa: E402
 
 app.include_router(api_router, prefix="/v1")
 app.include_router(admin_router, prefix="/v1")
+app.include_router(auth_router, prefix="/v1")
 
 
 # -----------------------------------------------------------------------------

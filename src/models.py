@@ -33,6 +33,14 @@ class TemplateStatus(str, Enum):
     REVIEW = "review"
 
 
+class UserRole(str, Enum):
+    """User role types."""
+
+    USER = "user"  # Regular customer user
+    ADMIN = "admin"  # Tenant admin
+    SUPERADMIN = "superadmin"  # System admin (us)
+
+
 class AuditAction(str, Enum):
     """Audit log action types."""
 
@@ -48,6 +56,10 @@ class AuditAction(str, Enum):
     EVALUATION_REQUESTED = "evaluation_requested"
     AUTH_FAILED = "auth_failed"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
+    USER_SIGNUP = "user_signup"
+    USER_LOGIN = "user_login"
+    USER_LOGOUT = "user_logout"
+    PASSWORD_CHANGED = "password_changed"
 
 
 # -----------------------------------------------------------------------------
@@ -68,6 +80,25 @@ class Tenant(SQLModel, table=True):
     # Relationships
     api_keys: list["APIKey"] = Relationship(back_populates="tenant")
     templates: list["Template"] = Relationship(back_populates="tenant")
+    users: list["User"] = Relationship(back_populates="tenant")
+
+
+class User(SQLModel, table=True):
+    """User account for dashboard access."""
+
+    __tablename__ = "users"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    email: str = SQLField(max_length=255, nullable=False, unique=True, index=True)
+    password_hash: str = SQLField(max_length=255, nullable=False)
+    role: str = SQLField(default="user", max_length=20)
+    is_active: bool = SQLField(default=True)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    last_login_at: datetime | None = SQLField(default=None)
+
+    # Relationships
+    tenant: Tenant = Relationship(back_populates="users")
 
 
 class APIKey(SQLModel, table=True):
@@ -155,7 +186,7 @@ class AuditLog(SQLModel, table=True):
     timestamp: datetime = SQLField(default_factory=datetime.utcnow, index=True)
     tenant_id: UUID | None = SQLField(default=None, index=True)
     actor_id: UUID | None = SQLField(default=None)
-    action: AuditAction = SQLField(nullable=False)
+    action: str = SQLField(max_length=50, nullable=False)
     resource_type: str | None = SQLField(max_length=100, default=None)
     resource_id: UUID | None = SQLField(default=None)
     details: dict[str, Any] | None = SQLField(default=None, sa_column=Column(JSONB))
@@ -310,3 +341,52 @@ class DetailedHealthResponse(SQLModel):
     status: str
     version: str = "0.1.0"
     services: dict[str, ServiceStatus] = Field(default_factory=dict)
+
+
+# -----------------------------------------------------------------------------
+# Auth Request/Response Schemas
+# -----------------------------------------------------------------------------
+
+
+class SignupRequest(SQLModel):
+    """Request body for user signup."""
+
+    email: str = Field(max_length=255, description="User email address")
+    password: str = Field(min_length=8, max_length=128, description="User password (min 8 chars)")
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        """Basic email validation."""
+        import re
+
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+        if not re.match(pattern, v):
+            raise ValueError("Invalid email format")
+        return v.lower()
+
+
+class LoginRequest(SQLModel):
+    """Request body for user login."""
+
+    email: str = Field(max_length=255, description="User email address")
+    password: str = Field(max_length=128, description="User password")
+
+
+class AuthResponse(SQLModel):
+    """Response for successful authentication."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int = Field(description="Token expiry in seconds")
+
+
+class UserResponse(SQLModel):
+    """Response for user info endpoint."""
+
+    id: UUID
+    email: str
+    role: str
+    tenant_id: UUID
+    tenant_name: str
+    created_at: datetime

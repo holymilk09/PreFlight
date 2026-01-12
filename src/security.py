@@ -1,8 +1,13 @@
-"""Security utilities for API key hashing and validation."""
+"""Security utilities for API key hashing, password hashing, and JWT."""
 
 import hashlib
 import secrets
+from datetime import datetime, timedelta
 from typing import NamedTuple
+from uuid import UUID
+
+import bcrypt
+import jwt
 
 from src.config import settings
 
@@ -128,3 +133,120 @@ def sanitize_for_log(data: dict) -> dict:
             result[key] = value
 
     return result
+
+
+# -----------------------------------------------------------------------------
+# Password Hashing (bcrypt)
+# -----------------------------------------------------------------------------
+
+
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt.
+
+    Args:
+        password: Plain text password to hash.
+
+    Returns:
+        Bcrypt hash string.
+    """
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its bcrypt hash.
+
+    Uses constant-time comparison to prevent timing attacks.
+
+    Args:
+        password: Plain text password to verify.
+        password_hash: Bcrypt hash from database.
+
+    Returns:
+        True if password matches, False otherwise.
+    """
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+
+
+# -----------------------------------------------------------------------------
+# JWT Token Management
+# -----------------------------------------------------------------------------
+
+
+class TokenData(NamedTuple):
+    """Decoded JWT token data."""
+
+    user_id: UUID
+    tenant_id: UUID
+    email: str
+    role: str
+    exp: datetime
+
+
+def create_access_token(
+    user_id: UUID,
+    tenant_id: UUID,
+    email: str,
+    role: str,
+    expires_delta: timedelta | None = None,
+) -> str:
+    """Create a JWT access token.
+
+    Args:
+        user_id: User UUID.
+        tenant_id: Tenant UUID.
+        email: User email.
+        role: User role.
+        expires_delta: Optional custom expiry time.
+
+    Returns:
+        Encoded JWT token string.
+    """
+    if expires_delta is None:
+        expires_delta = timedelta(minutes=settings.jwt_expire_minutes)
+
+    expire = datetime.utcnow() + expires_delta
+
+    payload = {
+        "sub": str(user_id),
+        "tenant_id": str(tenant_id),
+        "email": email,
+        "role": role,
+        "exp": expire,
+        "iat": datetime.utcnow(),
+        "type": "access",
+    }
+
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_access_token(token: str) -> TokenData | None:
+    """Decode and validate a JWT access token.
+
+    Args:
+        token: JWT token string.
+
+    Returns:
+        TokenData if valid, None if invalid or expired.
+    """
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+        )
+
+        # Validate token type
+        if payload.get("type") != "access":
+            return None
+
+        return TokenData(
+            user_id=UUID(payload["sub"]),
+            tenant_id=UUID(payload["tenant_id"]),
+            email=payload["email"],
+            role=payload["role"],
+            exp=datetime.fromtimestamp(payload["exp"]),
+        )
+    except (jwt.InvalidTokenError, KeyError, ValueError):
+        return None
