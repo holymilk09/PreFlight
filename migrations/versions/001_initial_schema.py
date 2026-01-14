@@ -20,6 +20,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Create enum types first
+    op.execute("CREATE TYPE templatestatus AS ENUM ('ACTIVE', 'DEPRECATED', 'REVIEW')")
+    op.execute("CREATE TYPE decision AS ENUM ('MATCH', 'REVIEW', 'NEW', 'REJECT')")
+
     # Create tenants table
     op.create_table(
         "tenants",
@@ -60,7 +64,7 @@ def upgrade() -> None:
         sa.Column("structural_features", postgresql.JSONB(), nullable=False),
         sa.Column("baseline_reliability", sa.Float(), nullable=False, server_default="0.85"),
         sa.Column("correction_rules", postgresql.JSONB(), nullable=False, server_default="[]"),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="active"),
+        sa.Column("status", postgresql.ENUM('ACTIVE', 'DEPRECATED', 'REVIEW', name='templatestatus', create_type=False), nullable=False, server_default="ACTIVE"),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("created_by", sa.UUID(), nullable=True),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
@@ -78,7 +82,7 @@ def upgrade() -> None:
         sa.Column("correlation_id", sa.String(length=255), nullable=False),
         sa.Column("document_hash", sa.String(length=64), nullable=False),
         sa.Column("template_id", sa.UUID(), nullable=True),
-        sa.Column("decision", sa.String(length=20), nullable=False),
+        sa.Column("decision", postgresql.ENUM('MATCH', 'REVIEW', 'NEW', 'REJECT', name='decision', create_type=False), nullable=False),
         sa.Column("match_confidence", sa.Float(), nullable=True),
         sa.Column("drift_score", sa.Float(), nullable=True),
         sa.Column("reliability_score", sa.Float(), nullable=True),
@@ -171,3 +175,7 @@ def downgrade() -> None:
     op.drop_table("templates")
     op.drop_table("api_keys")
     op.drop_table("tenants")
+
+    # Drop enum types
+    op.execute("DROP TYPE IF EXISTS decision")
+    op.execute("DROP TYPE IF EXISTS templatestatus")
