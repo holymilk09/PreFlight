@@ -36,6 +36,9 @@ function Header() {
           <Link href="#pricing" className="text-white/60 hover:text-white transition-colors text-sm">
             Pricing
           </Link>
+          <Link href="/faq" className="text-white/60 hover:text-white transition-colors text-sm">
+            FAQ
+          </Link>
           <Link href="/login" className="text-white/60 hover:text-white transition-colors text-sm">
             Sign In
           </Link>
@@ -723,8 +726,8 @@ function Footer() {
           <div className="text-white font-medium">PreFlight</div>
           <div className="flex gap-8 text-white/40 text-sm">
             <Link href="/docs" className="hover:text-white transition-colors">Documentation</Link>
-            <Link href="/pricing" className="hover:text-white transition-colors">Pricing</Link>
-            <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
+            <Link href="/faq" className="hover:text-white transition-colors">FAQ</Link>
+            <Link href="/security" className="hover:text-white transition-colors">Security</Link>
             <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
           </div>
           <div className="text-white/30 text-sm">
