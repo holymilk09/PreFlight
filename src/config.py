@@ -59,12 +59,23 @@ class Settings(BaseSettings):
     log_format: Literal["json", "console"] = Field(default="json")
 
     # API
-    api_host: str = Field(default="127.0.0.1")
+    api_host: str = Field(
+        default="0.0.0.0",
+        description="API host binding. Use 0.0.0.0 for container deployments, 127.0.0.1 for local-only",
+    )
     api_port: int = Field(default=8000, ge=1, le=65535)
 
     # Rate Limiting
     rate_limit_per_minute: int = Field(default=1000, ge=1)
     rate_limit_unauthenticated: int = Field(default=10, ge=1)
+
+    # Request Limits
+    max_request_body_size: int = Field(
+        default=1_048_576,  # 1MB
+        ge=1024,
+        le=10_485_760,  # Max 10MB
+        description="Maximum request body size in bytes (default 1MB)",
+    )
 
     # Sentry (Error Tracking)
     sentry_dsn: str | None = Field(

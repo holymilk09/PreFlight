@@ -344,6 +344,40 @@ class DetailedHealthResponse(SQLModel):
 
 
 # -----------------------------------------------------------------------------
+# Evaluation Response Schemas
+# -----------------------------------------------------------------------------
+
+
+class EvaluationRecord(SQLModel):
+    """Response body for a single evaluation record."""
+
+    id: UUID
+    correlation_id: str
+    document_hash: str
+    template_id: UUID | None
+    template_version_id: str | None = None
+    decision: Decision
+    match_confidence: float | None
+    drift_score: float | None
+    reliability_score: float | None
+    correction_rules: list[CorrectionRule] = Field(default_factory=list)
+    extractor_vendor: str | None
+    extractor_model: str | None
+    processing_time_ms: int | None
+    created_at: datetime
+
+
+class EvaluationListResponse(SQLModel):
+    """Paginated response for listing evaluations."""
+
+    evaluations: list[EvaluationRecord]
+    total: int = Field(description="Total number of evaluations matching filters")
+    limit: int
+    offset: int
+    has_more: bool = Field(description="Whether there are more results")
+
+
+# -----------------------------------------------------------------------------
 # Auth Request/Response Schemas
 # -----------------------------------------------------------------------------
 

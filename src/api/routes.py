@@ -5,7 +5,7 @@ import time
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from uuid_extensions import uuid7
 
 from src.api.auth import CurrentTenant
@@ -20,6 +20,8 @@ from src.models import (
     EvaluateRequest,
     EvaluateResponse,
     Evaluation,
+    EvaluationListResponse,
+    EvaluationRecord,
     ServiceStatus,
     Template,
     TemplateCreate,
@@ -176,6 +178,162 @@ async def evaluate(
         replay_hash=replay_hash,
         evaluation_id=evaluation_id,
         alerts=alerts,
+    )
+
+
+# -----------------------------------------------------------------------------
+# Evaluation History Endpoints
+# -----------------------------------------------------------------------------
+
+
+@router.get(
+    "/evaluations",
+    response_model=EvaluationListResponse,
+    tags=["Evaluations"],
+    summary="List evaluation history",
+)
+async def list_evaluations(
+    tenant: CurrentTenant,
+    db: TenantDbSession,
+    decision_filter: Decision | None = None,
+    correlation_id: str | None = None,
+    template_id: UUID | None = None,
+    min_reliability: float | None = None,
+    max_drift: float | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> EvaluationListResponse:
+    """List evaluation history for the current tenant.
+
+    Supports filtering by:
+    - decision: MATCH, REVIEW, NEW, REJECT
+    - correlation_id: Client's correlation ID (exact match)
+    - template_id: Filter by matched template
+    - min_reliability: Minimum reliability score
+    - max_drift: Maximum drift score
+
+    Results are ordered by created_at descending (newest first).
+    RLS ensures only evaluations belonging to the authenticated tenant are returned.
+    """
+    # Build base query
+    stmt = select(Evaluation).order_by(Evaluation.created_at.desc())
+
+    # Apply filters
+    if decision_filter:
+        stmt = stmt.where(Evaluation.decision == decision_filter)
+
+    if correlation_id:
+        stmt = stmt.where(Evaluation.correlation_id == correlation_id)
+
+    if template_id:
+        stmt = stmt.where(Evaluation.template_id == template_id)
+
+    if min_reliability is not None:
+        stmt = stmt.where(Evaluation.reliability_score >= min_reliability)
+
+    if max_drift is not None:
+        stmt = stmt.where(Evaluation.drift_score <= max_drift)
+
+    # Count total (for pagination)
+    count_stmt = select(func.count()).select_from(stmt.subquery())
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    # Apply pagination
+    stmt = stmt.limit(min(limit, 100)).offset(offset)
+
+    result = await db.execute(stmt)
+    evaluations = result.scalars().all()
+
+    # Build response with template version info
+    evaluation_records = []
+    for e in evaluations:
+        # Get template version if template exists
+        template_version_id = None
+        if e.template_id:
+            template_stmt = select(Template).where(Template.id == e.template_id)
+            template_result = await db.execute(template_stmt)
+            template = template_result.scalar_one_or_none()
+            if template:
+                template_version_id = f"{template.template_id}:{template.version}"
+
+        evaluation_records.append(
+            EvaluationRecord(
+                id=e.id,
+                correlation_id=e.correlation_id,
+                document_hash=e.document_hash,
+                template_id=e.template_id,
+                template_version_id=template_version_id,
+                decision=e.decision,
+                match_confidence=e.match_confidence,
+                drift_score=e.drift_score,
+                reliability_score=e.reliability_score,
+                correction_rules=[CorrectionRule(**r) for r in (e.correction_rules or [])],
+                extractor_vendor=e.extractor_vendor,
+                extractor_model=e.extractor_model,
+                processing_time_ms=e.processing_time_ms,
+                created_at=e.created_at,
+            )
+        )
+
+    return EvaluationListResponse(
+        evaluations=evaluation_records,
+        total=total,
+        limit=limit,
+        offset=offset,
+        has_more=(offset + len(evaluations)) < total,
+    )
+
+
+@router.get(
+    "/evaluations/{evaluation_id}",
+    response_model=EvaluationRecord,
+    tags=["Evaluations"],
+    summary="Get evaluation details",
+)
+async def get_evaluation(
+    evaluation_id: UUID,
+    tenant: CurrentTenant,
+    db: TenantDbSession,
+) -> EvaluationRecord:
+    """Get details of a specific evaluation.
+
+    RLS ensures the evaluation belongs to the authenticated tenant.
+    """
+    stmt = select(Evaluation).where(Evaluation.id == evaluation_id)
+    result = await db.execute(stmt)
+    evaluation = result.scalar_one_or_none()
+
+    if not evaluation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Evaluation not found",
+        )
+
+    # Get template version if template exists
+    template_version_id = None
+    if evaluation.template_id:
+        template_stmt = select(Template).where(Template.id == evaluation.template_id)
+        template_result = await db.execute(template_stmt)
+        template = template_result.scalar_one_or_none()
+        if template:
+            template_version_id = f"{template.template_id}:{template.version}"
+
+    return EvaluationRecord(
+        id=evaluation.id,
+        correlation_id=evaluation.correlation_id,
+        document_hash=evaluation.document_hash,
+        template_id=evaluation.template_id,
+        template_version_id=template_version_id,
+        decision=evaluation.decision,
+        match_confidence=evaluation.match_confidence,
+        drift_score=evaluation.drift_score,
+        reliability_score=evaluation.reliability_score,
+        correction_rules=[CorrectionRule(**r) for r in (evaluation.correction_rules or [])],
+        extractor_vendor=evaluation.extractor_vendor,
+        extractor_model=evaluation.extractor_model,
+        processing_time_ms=evaluation.processing_time_ms,
+        created_at=evaluation.created_at,
     )
 
 

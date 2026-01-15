@@ -26,6 +26,10 @@ class TestAuditAction:
             "evaluation_requested",
             "auth_failed",
             "rate_limit_exceeded",
+            "user_signup",
+            "user_login",
+            "user_logout",
+            "password_changed",
         ]
 
         for action_value in expected_actions:
@@ -40,8 +44,8 @@ class TestAuditAction:
         assert action == "api_key_created"
 
     def test_audit_action_members(self):
-        """AuditAction should have 12 members."""
-        assert len(AuditAction) == 12
+        """AuditAction should have 16 members."""
+        assert len(AuditAction) == 16
 
 
 class TestAuditLog:

@@ -33,7 +33,7 @@ if settings.sentry_dsn:
         # Filter out health check endpoints from traces
         traces_sampler=lambda ctx: (
             0.0
-            if ctx.get("wsgi_environ", {}).get("PATH_INFO") in ("/health", "/metrics", "/")
+            if ctx.get("wsgi_environ", {}).get("PATH_INFO") in ("/health", "/ready", "/metrics", "/")
             else settings.sentry_traces_sample_rate
         ),
     )
@@ -80,6 +80,31 @@ app = FastAPI(
 # -----------------------------------------------------------------------------
 # Middleware
 # -----------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def request_size_limit_middleware(request: Request, call_next: Any) -> Response:
+    """Reject requests with body size exceeding the configured limit.
+
+    Prevents DoS attacks via oversized payloads.
+    """
+    content_length = request.headers.get("content-length")
+
+    if content_length:
+        try:
+            size = int(content_length)
+            if size > settings.max_request_body_size:
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": f"Request body too large. Maximum size is {settings.max_request_body_size} bytes.",
+                        "max_size": settings.max_request_body_size,
+                    },
+                )
+        except ValueError:
+            pass  # Invalid content-length header, let it through for other validation
+
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -174,7 +199,7 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
     - Skip rate limiting for health endpoints
     """
     # Skip rate limiting for health and metrics endpoints
-    if request.url.path in ("/health", "/", "/metrics"):
+    if request.url.path in ("/health", "/ready", "/", "/metrics"):
         return await call_next(request)
 
     # Get client identifier and limit
@@ -323,12 +348,68 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 @app.get("/health", tags=["Health"])
 async def health_check() -> dict[str, str]:
-    """Health check endpoint for load balancers.
+    """Liveness probe for container orchestration.
 
     This endpoint is public and does not require authentication.
     Returns a simple status indicating the service is running.
+    Use this for Kubernetes liveness probes.
     """
     return {"status": "healthy"}
+
+
+@app.get("/ready", tags=["Health"])
+async def readiness_check() -> JSONResponse:
+    """Readiness probe that verifies dependencies.
+
+    This endpoint is public and does not require authentication.
+    Checks PostgreSQL and Redis connectivity.
+    Use this for Kubernetes readiness probes.
+
+    Returns:
+        200 OK if all dependencies are healthy
+        503 Service Unavailable if any dependency is down
+    """
+    import time
+
+    from sqlalchemy import text
+
+    from src.services.rate_limiter import get_redis_client
+
+    services = {}
+    all_healthy = True
+
+    # Check PostgreSQL
+    try:
+        start = time.perf_counter()
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+        latency = (time.perf_counter() - start) * 1000
+        services["database"] = {"healthy": True, "latency_ms": round(latency, 2)}
+    except Exception as e:
+        logger.warning("readiness_check_db_failed", error=str(e))
+        services["database"] = {"healthy": False}
+        all_healthy = False
+
+    # Check Redis
+    try:
+        start = time.perf_counter()
+        redis = await get_redis_client()
+        await redis.ping()
+        latency = (time.perf_counter() - start) * 1000
+        services["redis"] = {"healthy": True, "latency_ms": round(latency, 2)}
+    except Exception as e:
+        logger.warning("readiness_check_redis_failed", error=str(e))
+        services["redis"] = {"healthy": False}
+        all_healthy = False
+
+    status_code = 200 if all_healthy else 503
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if all_healthy else "not_ready",
+            "services": services,
+        },
+    )
 
 
 @app.get("/", tags=["Health"])

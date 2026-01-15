@@ -11,6 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.audit import log_audit_event
 from src.config import settings
 from src.db import async_session_maker
+from pydantic import Field
+from sqlmodel import SQLModel
+
 from src.models import (
     AuditAction,
     AuthResponse,
@@ -277,3 +280,127 @@ async def get_me(
             tenant_name=tenant.name,
             created_at=user.created_at,
         )
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Logout current user",
+)
+async def logout(
+    request: Request,
+    current_user: CurrentUser,
+) -> None:
+    """Logout the current user.
+
+    With JWT tokens, logout is primarily client-side (discard the token).
+    This endpoint logs the logout event for audit purposes.
+
+    Note: Token revocation would require a blocklist (Redis) which adds
+    complexity. For now, tokens expire naturally.
+    """
+    await log_audit_event(
+        action=AuditAction.USER_LOGOUT,
+        tenant_id=current_user.tenant_id,
+        actor_id=current_user.user_id,
+        resource_type="user",
+        resource_id=current_user.user_id,
+        details={"email": current_user.email},
+        ip_address=request.client.host if request.client else None,
+    )
+    # Client should discard the token
+    return None
+
+
+@router.post(
+    "/refresh",
+    response_model=AuthResponse,
+    summary="Refresh access token",
+)
+async def refresh_token(
+    current_user: CurrentUser,
+) -> AuthResponse:
+    """Get a new access token using a valid existing token.
+
+    This extends the user's session without requiring re-authentication.
+    The old token remains valid until it expires.
+    """
+    # Create new access token with fresh expiry
+    access_token = create_access_token(
+        user_id=current_user.user_id,
+        tenant_id=current_user.tenant_id,
+        email=current_user.email,
+        role=current_user.role,
+    )
+
+    return AuthResponse(
+        access_token=access_token,
+        token_type="bearer",
+        expires_in=settings.jwt_expire_minutes * 60,
+    )
+
+
+class PasswordChangeRequest(SQLModel):
+    """Request body for password change."""
+
+    current_password: str = Field(max_length=128, description="Current password")
+    new_password: str = Field(min_length=8, max_length=128, description="New password (min 8 chars)")
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Change password",
+)
+async def change_password(
+    request: Request,
+    body: PasswordChangeRequest,
+    current_user: CurrentUser,
+) -> None:
+    """Change the current user's password.
+
+    Requires the current password for verification.
+    """
+    async with async_session_maker() as session:
+        # Get user
+        stmt = select(User).where(User.id == current_user.user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+
+        # Verify current password
+        if not verify_password(body.current_password, user.password_hash):
+            await log_audit_event(
+                action=AuditAction.AUTH_FAILED,
+                tenant_id=current_user.tenant_id,
+                actor_id=current_user.user_id,
+                details={"reason": "invalid_current_password", "action": "password_change"},
+                ip_address=request.client.host if request.client else None,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Current password is incorrect",
+            )
+
+        # Update password
+        user.password_hash = hash_password(body.new_password)
+        session.add(user)
+        await session.commit()
+
+        # Log password change
+        await log_audit_event(
+            action=AuditAction.PASSWORD_CHANGED,
+            tenant_id=current_user.tenant_id,
+            actor_id=current_user.user_id,
+            resource_type="user",
+            resource_id=current_user.user_id,
+            details={"email": current_user.email},
+            ip_address=request.client.host if request.client else None,
+        )
+
+    return None
