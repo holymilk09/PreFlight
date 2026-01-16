@@ -168,10 +168,48 @@ class Evaluation(SQLModel, table=True):
     drift_score: float | None = SQLField(default=None)
     reliability_score: float | None = SQLField(default=None)
     correction_rules: list[dict[str, Any]] = SQLField(default_factory=list, sa_column=Column(JSONB))
+
+    # Enhanced extractor tracking
     extractor_vendor: str | None = SQLField(max_length=100, default=None)
     extractor_model: str | None = SQLField(max_length=100, default=None)
+    extractor_version: str | None = SQLField(max_length=50, default=None)
+    extractor_confidence: float | None = SQLField(default=None)
+    extractor_latency_ms: int | None = SQLField(default=None)
+    extractor_cost_usd: float | None = SQLField(default=None)
+
+    # Provider reference
+    provider_id: UUID | None = SQLField(default=None, foreign_key="extractor_providers.id")
+
+    # Safeguard results
+    validation_warnings: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
+
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     processing_time_ms: int | None = SQLField(default=None)
+
+
+class ExtractorProvider(SQLModel, table=True):
+    """Extractor provider configuration for multi-vendor support."""
+
+    __tablename__ = "extractor_providers"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    vendor: str = SQLField(max_length=50, nullable=False, unique=True, index=True)
+    display_name: str = SQLField(max_length=100, nullable=False)
+
+    # Calibration factors (1.0 = no adjustment)
+    confidence_multiplier: float = SQLField(default=1.0)
+    drift_sensitivity: float = SQLField(default=1.0)
+
+    # Provider characteristics
+    supported_element_types: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
+    typical_latency_ms: int = SQLField(default=500)
+
+    # Status
+    is_active: bool = SQLField(default=True)
+    is_known: bool = SQLField(default=True)
+
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
 class AuditLog(SQLModel, table=True):
@@ -363,6 +401,10 @@ class EvaluationRecord(SQLModel):
     correction_rules: list[CorrectionRule] = Field(default_factory=list)
     extractor_vendor: str | None
     extractor_model: str | None
+    extractor_version: str | None = None
+    extractor_confidence: float | None = None
+    extractor_latency_ms: int | None = None
+    validation_warnings: list[str] = Field(default_factory=list)
     processing_time_ms: int | None
     created_at: datetime
 

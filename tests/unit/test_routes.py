@@ -54,11 +54,22 @@ class TestEvaluateDecisionLogic:
             pipeline_id="test-pipeline",
         )
 
+    @pytest.fixture
+    def mock_db_with_provider(self):
+        """Create a mock DB session that returns None for provider lookup."""
+        mock_db = AsyncMock()
+        # Mock execute to return a result with scalar_one_or_none returning None
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_result
+        return mock_db
+
     @pytest.mark.asyncio
     async def test_new_decision_when_no_template_match(
         self,
         sample_structural_features,
         mock_evaluate_request,
+        mock_db_with_provider,
     ):
         """Should return NEW decision when no template matches."""
         from src.api.auth import AuthenticatedTenant
@@ -72,7 +83,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -87,13 +97,13 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             assert response.decision == Decision.NEW
             assert response.template_version_id is None
             assert response.drift_score == 0.0
-            assert response.reliability_score == 0.0
+            # Reliability score is now computed even for NEW (with default baseline)
             assert response.correction_rules == []
 
     @pytest.mark.asyncio
@@ -102,6 +112,7 @@ class TestEvaluateDecisionLogic:
         sample_structural_features,
         mock_evaluate_request,
         mock_template,
+        mock_db_with_provider,
     ):
         """Should return REVIEW decision when confidence is 0.50-0.85."""
         from src.api.auth import AuthenticatedTenant
@@ -116,7 +127,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -143,7 +153,7 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             assert response.decision == Decision.REVIEW
@@ -161,6 +171,7 @@ class TestEvaluateDecisionLogic:
         sample_structural_features,
         mock_evaluate_request,
         mock_template,
+        mock_db_with_provider,
     ):
         """Should return MATCH decision when confidence >= 0.85."""
         from src.api.auth import AuthenticatedTenant
@@ -175,7 +186,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -202,7 +212,7 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             assert response.decision == Decision.MATCH
@@ -219,6 +229,7 @@ class TestEvaluateDecisionLogic:
         sample_structural_features,
         mock_evaluate_request,
         mock_template,
+        mock_db_with_provider,
     ):
         """Should generate alert when drift score > 0.30."""
         from src.api.auth import AuthenticatedTenant
@@ -232,7 +243,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -254,7 +264,7 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             assert len(response.alerts) >= 1
@@ -266,6 +276,7 @@ class TestEvaluateDecisionLogic:
         sample_structural_features,
         mock_evaluate_request,
         mock_template,
+        mock_db_with_provider,
     ):
         """Should generate alert when reliability score < 0.80."""
         from src.api.auth import AuthenticatedTenant
@@ -279,7 +290,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -301,7 +311,7 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             assert len(response.alerts) >= 1
@@ -312,6 +322,7 @@ class TestEvaluateDecisionLogic:
         self,
         sample_structural_features,
         mock_evaluate_request,
+        mock_db_with_provider,
     ):
         """Should store evaluation record in database."""
         from src.api.auth import AuthenticatedTenant
@@ -325,7 +336,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -340,15 +350,15 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             # Verify db.add and db.commit were called
-            mock_db.add.assert_called_once()
-            mock_db.commit.assert_called_once()
+            mock_db_with_provider.add.assert_called_once()
+            mock_db_with_provider.commit.assert_called_once()
 
             # Verify the evaluation record has correct data
-            stored_eval = mock_db.add.call_args[0][0]
+            stored_eval = mock_db_with_provider.add.call_args[0][0]
             assert stored_eval.tenant_id == mock_tenant.tenant_id
             assert stored_eval.correlation_id == mock_evaluate_request.client_correlation_id
             assert stored_eval.decision == Decision.NEW
@@ -358,6 +368,7 @@ class TestEvaluateDecisionLogic:
         self,
         sample_structural_features,
         mock_evaluate_request,
+        mock_db_with_provider,
     ):
         """Replay hash should be SHA256 of evaluation_id:doc_hash:decision."""
         from src.api.auth import AuthenticatedTenant
@@ -371,7 +382,6 @@ class TestEvaluateDecisionLogic:
             rate_limit=1000,
         )
 
-        mock_db = AsyncMock()
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
         mock_request.state.request_id = str(uuid7())
@@ -386,7 +396,7 @@ class TestEvaluateDecisionLogic:
                 request=mock_request,
                 body=mock_evaluate_request,
                 tenant=mock_tenant,
-                db=mock_db,
+                db=mock_db_with_provider,
             )
 
             # Verify replay hash format (64 char hex)

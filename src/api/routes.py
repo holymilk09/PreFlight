@@ -22,6 +22,7 @@ from src.models import (
     Evaluation,
     EvaluationListResponse,
     EvaluationRecord,
+    ExtractorProvider,
     ServiceStatus,
     Template,
     TemplateCreate,
@@ -33,6 +34,7 @@ from src.models import (
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
 from src.services.reliability_scorer import compute_reliability_score
+from src.services.safeguard_engine import safeguard_engine
 from src.services.template_matcher import match_template
 
 router = APIRouter()
@@ -58,14 +60,34 @@ async def evaluate(
     """Evaluate document extraction metadata and return governance decision.
 
     This is the core endpoint that:
-    1. Matches the document to a known template
-    2. Computes drift score
-    3. Computes reliability score
-    4. Returns correction rules to apply
+    1. Looks up provider configuration for calibration
+    2. Runs safeguard validation on the request
+    3. Matches the document to a known template
+    4. Computes drift score with provider sensitivity
+    5. Computes reliability score with provider calibration
+    6. Returns correction rules to apply
 
     All operations are on metadata only - no document content is ever received.
     """
     start_time = time.perf_counter()
+    alerts: list[str] = []
+
+    # Look up provider configuration (case-insensitive)
+    vendor_lower = body.extractor_metadata.vendor.lower()
+    provider_stmt = select(ExtractorProvider).where(
+        func.lower(ExtractorProvider.vendor) == vendor_lower,
+        ExtractorProvider.is_active == True,  # noqa: E712
+    )
+    provider_result = await db.execute(provider_stmt)
+    provider = provider_result.scalar_one_or_none()
+
+    # Run safeguard validation
+    validation_warnings = safeguard_engine.validate_request(
+        features=body.structural_features,
+        extractor=body.extractor_metadata,
+        provider=provider,
+    )
+    alerts.extend(validation_warnings)
 
     # Match template
     matched_template, match_confidence = await match_template(
@@ -79,7 +101,12 @@ async def evaluate(
     if matched_template is None or match_confidence < 0.50:
         decision = Decision.NEW
         drift_score = 0.0
-        reliability_score = 0.0
+        reliability_score = await compute_reliability_score(
+            template=None,
+            extractor=body.extractor_metadata,
+            drift_score=0.0,
+            provider=provider,
+        )
         correction_rules = []
         template_version_id = None
     elif match_confidence < 0.85:
@@ -92,6 +119,7 @@ async def evaluate(
             template=matched_template,
             extractor=body.extractor_metadata,
             drift_score=drift_score,
+            provider=provider,
         )
         correction_rules = await select_correction_rules(
             template=matched_template,
@@ -108,6 +136,7 @@ async def evaluate(
             template=matched_template,
             extractor=body.extractor_metadata,
             drift_score=drift_score,
+            provider=provider,
         )
         correction_rules = await select_correction_rules(
             template=matched_template,
@@ -124,7 +153,7 @@ async def evaluate(
     # Calculate processing time
     processing_time_ms = int((time.perf_counter() - start_time) * 1000)
 
-    # Store evaluation record
+    # Store evaluation record with enhanced extractor tracking
     evaluation = Evaluation(
         id=evaluation_id,
         tenant_id=tenant.tenant_id,
@@ -136,8 +165,15 @@ async def evaluate(
         drift_score=drift_score,
         reliability_score=reliability_score,
         correction_rules=[r.model_dump() for r in correction_rules],
+        # Enhanced extractor tracking
         extractor_vendor=body.extractor_metadata.vendor,
         extractor_model=body.extractor_metadata.model,
+        extractor_version=body.extractor_metadata.version,
+        extractor_confidence=body.extractor_metadata.confidence,
+        extractor_latency_ms=body.extractor_metadata.latency_ms,
+        extractor_cost_usd=body.extractor_metadata.cost_usd,
+        provider_id=provider.id if provider else None,
+        validation_warnings=validation_warnings,
         processing_time_ms=processing_time_ms,
     )
     db.add(evaluation)
@@ -162,12 +198,13 @@ async def evaluate(
         template_matched=matched_template is not None,
     )
 
-    # Build alerts
-    alerts = []
+    # Add drift/reliability alerts (validation warnings already in alerts)
     if drift_score > 0.30:
         alerts.append(f"High drift detected: {drift_score:.2f}")
-    if reliability_score < 0.80:
+    if reliability_score < 0.80 and matched_template is not None:
         alerts.append(f"Low reliability: {reliability_score:.2f}")
+    if provider is None:
+        alerts.append(f"Unknown provider: {body.extractor_metadata.vendor}")
 
     return EvaluateResponse(
         decision=decision,
@@ -271,6 +308,10 @@ async def list_evaluations(
                 correction_rules=[CorrectionRule(**r) for r in (e.correction_rules or [])],
                 extractor_vendor=e.extractor_vendor,
                 extractor_model=e.extractor_model,
+                extractor_version=e.extractor_version,
+                extractor_confidence=e.extractor_confidence,
+                extractor_latency_ms=e.extractor_latency_ms,
+                validation_warnings=e.validation_warnings or [],
                 processing_time_ms=e.processing_time_ms,
                 created_at=e.created_at,
             )
@@ -332,6 +373,10 @@ async def get_evaluation(
         correction_rules=[CorrectionRule(**r) for r in (evaluation.correction_rules or [])],
         extractor_vendor=evaluation.extractor_vendor,
         extractor_model=evaluation.extractor_model,
+        extractor_version=evaluation.extractor_version,
+        extractor_confidence=evaluation.extractor_confidence,
+        extractor_latency_ms=evaluation.extractor_latency_ms,
+        validation_warnings=evaluation.validation_warnings or [],
         processing_time_ms=evaluation.processing_time_ms,
         created_at=evaluation.created_at,
     )
