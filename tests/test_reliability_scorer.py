@@ -4,11 +4,26 @@ import math
 
 import pytest
 
-from src.models import ExtractorMetadata
+from src.models import ExtractorMetadata, ExtractorProvider
 from src.services.reliability_scorer import (
     compute_reliability_score,
     get_reliability_breakdown,
 )
+
+
+@pytest.fixture
+def nvidia_provider() -> ExtractorProvider:
+    """Create NVIDIA provider configuration."""
+    return ExtractorProvider(
+        vendor="nvidia",
+        display_name="NVIDIA Nemotron",
+        confidence_multiplier=1.05,
+        drift_sensitivity=0.9,
+        supported_element_types=["text", "table", "figure", "list", "title"],
+        typical_latency_ms=300,
+        is_active=True,
+        is_known=True,
+    )
 
 
 class TestComputeReliabilityScore:
@@ -16,15 +31,16 @@ class TestComputeReliabilityScore:
 
     @pytest.mark.asyncio
     async def test_high_reliability_optimal_conditions(
-        self, sample_template, sample_extractor_metadata
+        self, sample_template, sample_extractor_metadata, nvidia_provider
     ):
         """Optimal conditions should produce high reliability."""
         reliability = await compute_reliability_score(
             template=sample_template,
             extractor=sample_extractor_metadata,
             drift_score=0.0,
+            provider=nvidia_provider,
         )
-        # High baseline (0.85) + high confidence (0.95) + no drift = high score
+        # High baseline (0.85) + high confidence (0.95) + no drift + known provider = high score
         assert reliability > 0.85
 
     @pytest.mark.asyncio
@@ -57,7 +73,7 @@ class TestComputeReliabilityScore:
         assert reliability_no_drift - reliability_high_drift > 0.10
 
     @pytest.mark.asyncio
-    async def test_unknown_extractor_penalty(self, sample_template):
+    async def test_unknown_extractor_penalty(self, sample_template, nvidia_provider):
         """Unknown extractor should reduce reliability."""
         known_extractor = ExtractorMetadata(
             vendor="nvidia",
@@ -78,11 +94,13 @@ class TestComputeReliabilityScore:
             template=sample_template,
             extractor=known_extractor,
             drift_score=0.1,
+            provider=nvidia_provider,  # Known provider
         )
         reliability_unknown = await compute_reliability_score(
             template=sample_template,
             extractor=unknown_extractor,
             drift_score=0.1,
+            provider=None,  # Unknown provider
         )
 
         # Unknown extractor gets 10% penalty
@@ -149,17 +167,18 @@ class TestComputeReliabilityScore:
 class TestGetReliabilityBreakdown:
     """Tests for reliability breakdown details."""
 
-    def test_breakdown_structure(self, sample_template, sample_extractor_metadata):
+    def test_breakdown_structure(self, sample_template, sample_extractor_metadata, nvidia_provider):
         """Verify breakdown has expected structure."""
         breakdown = get_reliability_breakdown(
             template=sample_template,
             extractor=sample_extractor_metadata,
             drift_score=0.1,
+            provider=nvidia_provider,
         )
 
         assert "components" in breakdown
         assert "adjustments" in breakdown
-        assert "extractor" in breakdown
+        assert "provider" in breakdown
 
         assert "baseline_reliability" in breakdown["components"]
         assert "extractor_confidence" in breakdown["components"]
@@ -176,16 +195,17 @@ class TestGetReliabilityBreakdown:
         total_weight = sum(c["weight"] for c in breakdown["components"].values())
         assert total_weight == pytest.approx(1.0, abs=0.01)
 
-    def test_breakdown_known_extractor(self, sample_template, sample_extractor_metadata):
+    def test_breakdown_known_extractor(self, sample_template, sample_extractor_metadata, nvidia_provider):
         """Verify known extractor is correctly identified."""
         breakdown = get_reliability_breakdown(
             template=sample_template,
             extractor=sample_extractor_metadata,
             drift_score=0.1,
+            provider=nvidia_provider,
         )
 
-        assert breakdown["extractor"]["is_known"] is True
-        assert breakdown["adjustments"]["unknown_extractor_penalty"] is False
+        assert breakdown["provider"]["is_known"] is True
+        assert breakdown["adjustments"]["unknown_provider_penalty"] is False
 
     def test_breakdown_drift_factor(self, sample_template, sample_extractor_metadata):
         """Verify drift factor uses exponential decay."""

@@ -23,6 +23,7 @@ from uuid_extensions import uuid7
 from src.models import (
     APIKey,
     ExtractorMetadata,
+    ExtractorProvider,
     StructuralFeatures,
     Template,
     TemplateStatus,
@@ -134,7 +135,7 @@ async def test_engine():
     """Create test database engine for each test.
 
     Each test gets its own engine to avoid event loop conflicts.
-    Tables are created once at first use (or should already exist).
+    Tables are dropped and recreated to ensure schema matches models.
     """
     engine = create_async_engine(
         TEST_DATABASE_URL,
@@ -142,8 +143,9 @@ async def test_engine():
         pool_pre_ping=True,  # Check connection validity
     )
 
-    # Ensure tables exist (safe to call multiple times)
+    # Drop and recreate all tables to ensure schema matches current models
     async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.drop_all)
         await conn.run_sync(SQLModel.metadata.create_all)
 
     # Set up RLS policies (idempotent - will not error if already exist)
@@ -217,7 +219,25 @@ async def test_engine():
         await conn.execute(text("TRUNCATE TABLE templates CASCADE"))
         await conn.execute(text("TRUNCATE TABLE api_keys CASCADE"))
         await conn.execute(text("TRUNCATE TABLE tenants CASCADE"))
+        # Truncate and reseed provider table
+        await conn.execute(text("TRUNCATE TABLE extractor_providers CASCADE"))
         await conn.execute(text("SET session_replication_role = 'origin'"))
+
+    # Seed default providers for tests
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("""
+            INSERT INTO extractor_providers (id, vendor, display_name, confidence_multiplier, drift_sensitivity, supported_element_types, typical_latency_ms, is_active, is_known, created_at, updated_at)
+            VALUES
+                (gen_random_uuid(), 'aws', 'AWS Textract', 1.0, 1.0, '["PAGE", "LINE", "WORD", "TABLE", "CELL", "KEY_VALUE_SET"]', 450, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'azure', 'Azure Document Intelligence', 0.95, 1.1, '["page", "paragraph", "table", "figure", "keyValuePair"]', 600, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'google', 'Google Document AI', 1.0, 1.0, '["text_segment", "table", "form_field", "paragraph"]', 550, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'nvidia', 'NVIDIA Nemotron', 1.05, 0.9, '["text", "table", "figure", "list", "title"]', 300, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'abbyy', 'ABBYY FineReader', 0.98, 1.0, '["text", "table", "barcode", "checkmark"]', 800, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'tesseract', 'Tesseract OCR', 0.85, 1.2, '["text", "line", "word"]', 200, true, true, NOW(), NOW())
+            ON CONFLICT (vendor) DO NOTHING
+        """)
+        )
 
     yield engine
 

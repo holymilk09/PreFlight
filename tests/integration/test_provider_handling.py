@@ -12,9 +12,9 @@ class TestProviderRegistry:
     """Tests for provider registry seeding and lookup."""
 
     @pytest.mark.asyncio
-    async def test_providers_seeded(self, async_session: AsyncSession):
+    async def test_providers_seeded(self, db_session: AsyncSession):
         """Default providers should be seeded in database."""
-        result = await async_session.execute(select(ExtractorProvider))
+        result = await db_session.execute(select(ExtractorProvider))
         providers = result.scalars().all()
 
         # Should have at least the default providers
@@ -25,9 +25,9 @@ class TestProviderRegistry:
         assert "nvidia" in vendor_names
 
     @pytest.mark.asyncio
-    async def test_aws_provider_config(self, async_session: AsyncSession):
+    async def test_aws_provider_config(self, db_session: AsyncSession):
         """AWS provider should have correct configuration."""
-        result = await async_session.execute(
+        result = await db_session.execute(
             select(ExtractorProvider).where(ExtractorProvider.vendor == "aws")
         )
         aws = result.scalar_one_or_none()
@@ -41,9 +41,9 @@ class TestProviderRegistry:
         assert "TABLE" in aws.supported_element_types
 
     @pytest.mark.asyncio
-    async def test_azure_provider_calibration(self, async_session: AsyncSession):
+    async def test_azure_provider_calibration(self, db_session: AsyncSession):
         """Azure provider should have confidence calibration."""
-        result = await async_session.execute(
+        result = await db_session.execute(
             select(ExtractorProvider).where(ExtractorProvider.vendor == "azure")
         )
         azure = result.scalar_one_or_none()
@@ -58,12 +58,11 @@ class TestEvaluateWithProviders:
 
     @pytest.mark.asyncio
     async def test_evaluate_with_known_provider(
-        self, client: AsyncClient, auth_headers: dict
+        self, authenticated_client: AsyncClient
     ):
         """Evaluate with known provider should not have unknown provider warning."""
-        response = await client.post(
+        response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
                 "layout_fingerprint": "a" * 64,
                 "structural_features": {
@@ -100,12 +99,11 @@ class TestEvaluateWithProviders:
 
     @pytest.mark.asyncio
     async def test_evaluate_with_unknown_provider(
-        self, client: AsyncClient, auth_headers: dict
+        self, authenticated_client: AsyncClient
     ):
         """Evaluate with unknown provider should have warning and penalty."""
-        response = await client.post(
+        response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
                 "layout_fingerprint": "c" * 64,
                 "structural_features": {
@@ -142,12 +140,11 @@ class TestEvaluateWithProviders:
 
     @pytest.mark.asyncio
     async def test_evaluate_case_insensitive_vendor(
-        self, client: AsyncClient, auth_headers: dict
+        self, authenticated_client: AsyncClient
     ):
         """Vendor lookup should be case-insensitive."""
-        response = await client.post(
+        response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
                 "layout_fingerprint": "e" * 64,
                 "structural_features": {
@@ -184,14 +181,13 @@ class TestEvaluateWithProviders:
 
     @pytest.mark.asyncio
     async def test_evaluate_stores_full_extractor_metadata(
-        self, client: AsyncClient, auth_headers: dict
+        self, authenticated_client: AsyncClient
     ):
         """Evaluation should store full extractor metadata."""
-        response = await client.post(
+        response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
-                "layout_fingerprint": "g" * 64,
+                "layout_fingerprint": "0" * 64,
                 "structural_features": {
                     "element_count": 50,
                     "table_count": 2,
@@ -213,7 +209,7 @@ class TestEvaluateWithProviders:
                     "latency_ms": 280,
                     "cost_usd": 0.001,
                 },
-                "client_doc_hash": "h" * 64,
+                "client_doc_hash": "1" * 64,
                 "client_correlation_id": "test-full-metadata",
                 "pipeline_id": "test-pipeline",
             },
@@ -224,9 +220,8 @@ class TestEvaluateWithProviders:
         evaluation_id = data["evaluation_id"]
 
         # Fetch the evaluation to verify stored data
-        get_response = await client.get(
+        get_response = await authenticated_client.get(
             f"/v1/evaluations/{evaluation_id}",
-            headers=auth_headers,
         )
 
         assert get_response.status_code == 200
@@ -244,14 +239,13 @@ class TestSafeguardWarnings:
 
     @pytest.mark.asyncio
     async def test_zero_elements_error_in_alerts(
-        self, client: AsyncClient, auth_headers: dict
+        self, authenticated_client: AsyncClient
     ):
         """Zero elements should produce error in alerts."""
-        response = await client.post(
+        response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
-                "layout_fingerprint": "i" * 64,
+                "layout_fingerprint": "2" * 64,
                 "structural_features": {
                     "element_count": 0,  # Zero elements
                     "table_count": 0,
@@ -272,7 +266,7 @@ class TestSafeguardWarnings:
                     "confidence": 0.5,
                     "latency_ms": 450,
                 },
-                "client_doc_hash": "j" * 64,
+                "client_doc_hash": "3" * 64,
                 "client_correlation_id": "test-zero-elements",
                 "pipeline_id": "test-pipeline",
             },
@@ -286,14 +280,13 @@ class TestSafeguardWarnings:
 
     @pytest.mark.asyncio
     async def test_excessive_latency_warning(
-        self, client: AsyncClient, auth_headers: dict
+        self, authenticated_client: AsyncClient
     ):
         """Excessive latency should produce warning."""
-        response = await client.post(
+        response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
-                "layout_fingerprint": "k" * 64,
+                "layout_fingerprint": "4" * 64,
                 "structural_features": {
                     "element_count": 50,
                     "table_count": 2,
@@ -314,7 +307,7 @@ class TestSafeguardWarnings:
                     "confidence": 0.95,
                     "latency_ms": 5000,  # 5 seconds - way over typical
                 },
-                "client_doc_hash": "l" * 64,
+                "client_doc_hash": "5" * 64,
                 "client_correlation_id": "test-high-latency",
                 "pipeline_id": "test-pipeline",
             },
@@ -332,13 +325,12 @@ class TestProviderCalibration:
 
     @pytest.mark.asyncio
     async def test_azure_confidence_calibrated(
-        self, client: AsyncClient, auth_headers: dict, async_session: AsyncSession
+        self, authenticated_client: AsyncClient
     ):
         """Azure's confidence multiplier should affect reliability."""
         # First, create a template to get a MATCH decision
-        template_response = await client.post(
+        template_response = await authenticated_client.post(
             "/v1/templates",
-            headers=auth_headers,
             json={
                 "template_id": "test-azure-calibration",
                 "version": "1.0",
@@ -362,9 +354,8 @@ class TestProviderCalibration:
         template_fingerprint = template_response.json()["fingerprint"]
 
         # Evaluate with Azure (has 0.95 confidence multiplier)
-        azure_response = await client.post(
+        azure_response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
                 "layout_fingerprint": template_fingerprint,
                 "structural_features": {
@@ -387,7 +378,7 @@ class TestProviderCalibration:
                     "confidence": 0.95,
                     "latency_ms": 600,
                 },
-                "client_doc_hash": "m" * 64,
+                "client_doc_hash": "6" * 64,
                 "client_correlation_id": "test-azure-eval",
                 "pipeline_id": "test-pipeline",
             },
@@ -397,9 +388,8 @@ class TestProviderCalibration:
         azure_data = azure_response.json()
 
         # Evaluate same document with AWS (1.0 confidence multiplier)
-        aws_response = await client.post(
+        aws_response = await authenticated_client.post(
             "/v1/evaluate",
-            headers=auth_headers,
             json={
                 "layout_fingerprint": template_fingerprint,
                 "structural_features": {
@@ -422,7 +412,7 @@ class TestProviderCalibration:
                     "confidence": 0.95,  # Same confidence
                     "latency_ms": 450,
                 },
-                "client_doc_hash": "n" * 64,
+                "client_doc_hash": "7" * 64,
                 "client_correlation_id": "test-aws-eval",
                 "pipeline_id": "test-pipeline",
             },
