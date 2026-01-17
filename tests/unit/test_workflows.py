@@ -314,7 +314,9 @@ class TestActivityExecution:
             current_features=sample_structural_features.model_dump(),
         )
 
-        with patch("src.services.drift_detector.compute_drift_score", new_callable=AsyncMock) as mock_drift:
+        with patch(
+            "src.services.drift_detector.compute_drift_score", new_callable=AsyncMock
+        ) as mock_drift:
             mock_drift.return_value = 0.15
             result = await compute_drift_activity(input_data)
 
@@ -347,7 +349,9 @@ class TestActivityExecution:
             reliability_score=0.85,
         )
 
-        mock_rules = [MagicMock(model_dump=MagicMock(return_value={"field": "total", "rule": "sum"}))]
+        mock_rules = [
+            MagicMock(model_dump=MagicMock(return_value={"field": "total", "rule": "sum"}))
+        ]
 
         with patch(
             "src.services.correction_rules.select_correction_rules", new_callable=AsyncMock
@@ -416,6 +420,7 @@ class TestMatchTemplateActivity:
         assert result.confidence == 1.0
         assert result.template_id == str(template_id)
 
+
 class TestRunWorker:
     """Test run_worker function."""
 
@@ -429,7 +434,9 @@ class TestRunWorker:
         with (
             patch("src.db.init_db", new_callable=AsyncMock) as mock_init_db,
             patch("src.workflows.worker.Client") as mock_client_class,
-            patch("src.workflows.worker.create_worker", new_callable=AsyncMock) as mock_create_worker,
+            patch(
+                "src.workflows.worker.create_worker", new_callable=AsyncMock
+            ) as mock_create_worker,
         ):
             mock_client_class.connect = AsyncMock(return_value=mock_client)
             mock_create_worker.return_value = mock_worker
@@ -481,9 +488,10 @@ class TestWorkerCreation:
         """Should create worker and connect to Temporal."""
         mock_client = MagicMock()
 
-        with patch("src.workflows.worker.Client") as mock_client_class, patch(
-            "src.workflows.worker.Worker"
-        ) as mock_worker_class:
+        with (
+            patch("src.workflows.worker.Client") as mock_client_class,
+            patch("src.workflows.worker.Worker") as mock_worker_class,
+        ):
             mock_client_class.connect = AsyncMock(return_value=mock_client)
             mock_worker = MagicMock()
             mock_worker_class.return_value = mock_worker

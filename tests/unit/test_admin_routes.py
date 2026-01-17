@@ -1,9 +1,8 @@
 """Tests for admin API routes."""
 
-import pytest
-from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from fastapi import HTTPException
 
 
@@ -82,8 +81,9 @@ class TestSchemas:
 
     def test_tenant_response_schema(self):
         """TenantResponse should include all fields."""
-        from src.api.admin_routes import TenantResponse
         from datetime import datetime
+
+        from src.api.admin_routes import TenantResponse
 
         now = datetime.utcnow()
         response = TenantResponse(
@@ -114,8 +114,9 @@ class TestSchemas:
 
     def test_api_key_response_schema(self):
         """APIKeyResponse should include all fields."""
-        from src.api.admin_routes import APIKeyResponse
         from datetime import datetime
+
+        from src.api.admin_routes import APIKeyResponse
 
         now = datetime.utcnow()
         response = APIKeyResponse(
@@ -136,8 +137,9 @@ class TestSchemas:
 
     def test_api_key_create_response(self):
         """APIKeyCreateResponse should include api_key."""
-        from src.api.admin_routes import APIKeyCreateResponse
         from datetime import datetime
+
+        from src.api.admin_routes import APIKeyCreateResponse
 
         now = datetime.utcnow()
         response = APIKeyCreateResponse(

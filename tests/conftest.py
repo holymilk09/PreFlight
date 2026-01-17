@@ -23,7 +23,6 @@ from uuid_extensions import uuid7
 from src.models import (
     APIKey,
     ExtractorMetadata,
-    ExtractorProvider,
     StructuralFeatures,
     Template,
     TemplateStatus,

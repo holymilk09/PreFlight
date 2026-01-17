@@ -1,8 +1,8 @@
 """Additional tests for model properties and validation."""
 
-import pytest
 from datetime import datetime
-from uuid import uuid4
+
+import pytest
 from pydantic import ValidationError
 
 
@@ -11,8 +11,9 @@ class TestAPIKeyModel:
 
     def test_api_key_is_active_when_not_revoked(self):
         """is_active should return True when revoked_at is None."""
-        from src.models import APIKey
         from uuid_extensions import uuid7
+
+        from src.models import APIKey
 
         api_key = APIKey(
             id=uuid7(),
@@ -27,8 +28,9 @@ class TestAPIKeyModel:
 
     def test_api_key_is_inactive_when_revoked(self):
         """is_active should return False when revoked_at is set."""
-        from src.models import APIKey
         from uuid_extensions import uuid7
+
+        from src.models import APIKey
 
         api_key = APIKey(
             id=uuid7(),

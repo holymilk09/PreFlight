@@ -42,7 +42,7 @@ async def get_tenant_db(
             tenant_id_str = str(tenant.tenant_id)
             await session.execute(
                 text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-                {"tenant_id": tenant_id_str}
+                {"tenant_id": tenant_id_str},
             )
             yield session
         finally:

@@ -1,9 +1,10 @@
 """Tests for user authentication routes."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid_extensions import uuid7
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from uuid_extensions import uuid7
 
 from src.security import TokenData
 
@@ -14,8 +15,9 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_missing_credentials_raises_401(self):
         """Should raise 401 when no credentials provided."""
-        from src.api.user_auth import get_current_user
         from fastapi import HTTPException
+
+        from src.api.user_auth import get_current_user
 
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(credentials=None)
@@ -26,13 +28,13 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_invalid_token_raises_401(self):
         """Should raise 401 when token is invalid."""
-        from src.api.user_auth import get_current_user
         from fastapi import HTTPException
         from fastapi.security import HTTPAuthorizationCredentials
 
+        from src.api.user_auth import get_current_user
+
         mock_credentials = HTTPAuthorizationCredentials(
-            scheme="Bearer",
-            credentials="invalid_token"
+            scheme="Bearer", credentials="invalid_token"
         )
 
         with patch("src.api.user_auth.decode_access_token", return_value=None):
@@ -45,8 +47,9 @@ class TestGetCurrentUser:
     @pytest.mark.asyncio
     async def test_valid_token_returns_token_data(self):
         """Should return token data when token is valid."""
-        from src.api.user_auth import get_current_user
         from fastapi.security import HTTPAuthorizationCredentials
+
+        from src.api.user_auth import get_current_user
 
         user_id = uuid7()
         tenant_id = uuid7()
@@ -59,10 +62,7 @@ class TestGetCurrentUser:
             jti="test-jti-12345",
         )
 
-        mock_credentials = HTTPAuthorizationCredentials(
-            scheme="Bearer",
-            credentials="valid_token"
-        )
+        mock_credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_token")
 
         with (
             patch("src.api.user_auth.decode_access_token", return_value=expected_token_data),
@@ -90,10 +90,7 @@ class TestSignup:
         mock_result.scalar_one_or_none.return_value = None  # No existing user
         mock_session.execute.return_value = mock_result
 
-        body = SignupRequest(
-            email="newuser@example.com",
-            password="securepassword123"
-        )
+        body = SignupRequest(email="newuser@example.com", password="securepassword123")
 
         with (
             patch("src.api.user_auth.async_session_maker") as mock_session_maker,
@@ -113,9 +110,10 @@ class TestSignup:
     @pytest.mark.asyncio
     async def test_signup_rejects_duplicate_email(self):
         """Should return 409 when email already exists."""
+        from fastapi import HTTPException
+
         from src.api.user_auth import signup
         from src.models import SignupRequest, User
-        from fastapi import HTTPException
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -129,10 +127,7 @@ class TestSignup:
         mock_result.scalar_one_or_none.return_value = existing_user
         mock_session.execute.return_value = mock_result
 
-        body = SignupRequest(
-            email="existing@example.com",
-            password="password123"
-        )
+        body = SignupRequest(email="existing@example.com", password="password123")
 
         with patch("src.api.user_auth.async_session_maker") as mock_session_maker:
             mock_session_maker.return_value.__aenter__.return_value = mock_session
@@ -150,9 +145,10 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_user_not_found(self):
         """Should return 401 when user not found."""
+        from fastapi import HTTPException
+
         from src.api.user_auth import login
         from src.models import LoginRequest
-        from fastapi import HTTPException
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -162,10 +158,7 @@ class TestLogin:
         mock_result.first.return_value = None  # No user found
         mock_session.execute.return_value = mock_result
 
-        body = LoginRequest(
-            email="nonexistent@example.com",
-            password="password123"
-        )
+        body = LoginRequest(email="nonexistent@example.com", password="password123")
 
         with (
             patch("src.api.user_auth.async_session_maker") as mock_session_maker,
@@ -181,9 +174,10 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_inactive_user(self):
         """Should return 401 when user is inactive."""
+        from fastapi import HTTPException
+
         from src.api.user_auth import login
         from src.models import LoginRequest
-        from fastapi import HTTPException
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -197,10 +191,7 @@ class TestLogin:
         mock_result.first.return_value = (mock_user, mock_tenant)
         mock_session.execute.return_value = mock_result
 
-        body = LoginRequest(
-            email="inactive@example.com",
-            password="password123"
-        )
+        body = LoginRequest(email="inactive@example.com", password="password123")
 
         with patch("src.api.user_auth.async_session_maker") as mock_session_maker:
             mock_session_maker.return_value.__aenter__.return_value = mock_session
@@ -214,9 +205,10 @@ class TestLogin:
     @pytest.mark.asyncio
     async def test_login_wrong_password(self):
         """Should return 401 when password is wrong."""
+        from fastapi import HTTPException
+
         from src.api.user_auth import login
         from src.models import LoginRequest
-        from fastapi import HTTPException
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -233,10 +225,7 @@ class TestLogin:
         mock_result.first.return_value = (mock_user, mock_tenant)
         mock_session.execute.return_value = mock_result
 
-        body = LoginRequest(
-            email="user@example.com",
-            password="wrongpassword"
-        )
+        body = LoginRequest(email="user@example.com", password="wrongpassword")
 
         with (
             patch("src.api.user_auth.async_session_maker") as mock_session_maker,
@@ -273,10 +262,7 @@ class TestLogin:
         mock_result.first.return_value = (mock_user, mock_tenant)
         mock_session.execute.return_value = mock_result
 
-        body = LoginRequest(
-            email="user@example.com",
-            password="correctpassword"
-        )
+        body = LoginRequest(email="user@example.com", password="correctpassword")
 
         with (
             patch("src.api.user_auth.async_session_maker") as mock_session_maker,
@@ -298,8 +284,9 @@ class TestGetMe:
     @pytest.mark.asyncio
     async def test_get_me_user_not_found(self):
         """Should return 404 when user not found."""
-        from src.api.user_auth import get_me
         from fastapi import HTTPException
+
+        from src.api.user_auth import get_me
 
         current_user = TokenData(
             user_id=uuid7(),
@@ -422,8 +409,9 @@ class TestChangePassword:
     @pytest.mark.asyncio
     async def test_change_password_user_not_found(self):
         """Should return 404 when user not found."""
-        from src.api.user_auth import change_password, PasswordChangeRequest
         from fastapi import HTTPException
+
+        from src.api.user_auth import PasswordChangeRequest, change_password
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -437,10 +425,7 @@ class TestChangePassword:
             jti="test-jti-12345",
         )
 
-        body = PasswordChangeRequest(
-            current_password="oldpassword",
-            new_password="newpassword123"
-        )
+        body = PasswordChangeRequest(current_password="oldpassword", new_password="newpassword123")
 
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -451,19 +436,16 @@ class TestChangePassword:
             mock_session_maker.return_value.__aenter__.return_value = mock_session
 
             with pytest.raises(HTTPException) as exc_info:
-                await change_password(
-                    request=mock_request,
-                    body=body,
-                    current_user=current_user
-                )
+                await change_password(request=mock_request, body=body, current_user=current_user)
 
             assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_change_password_wrong_current_password(self):
         """Should return 401 when current password is wrong."""
-        from src.api.user_auth import change_password, PasswordChangeRequest
         from fastapi import HTTPException
+
+        from src.api.user_auth import PasswordChangeRequest, change_password
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -478,8 +460,7 @@ class TestChangePassword:
         )
 
         body = PasswordChangeRequest(
-            current_password="wrongpassword",
-            new_password="newpassword123"
+            current_password="wrongpassword", new_password="newpassword123"
         )
 
         mock_user = MagicMock()
@@ -498,18 +479,14 @@ class TestChangePassword:
             mock_session_maker.return_value.__aenter__.return_value = mock_session
 
             with pytest.raises(HTTPException) as exc_info:
-                await change_password(
-                    request=mock_request,
-                    body=body,
-                    current_user=current_user
-                )
+                await change_password(request=mock_request, body=body, current_user=current_user)
 
             assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
     async def test_change_password_success(self):
         """Should update password on success."""
-        from src.api.user_auth import change_password, PasswordChangeRequest
+        from src.api.user_auth import PasswordChangeRequest, change_password
 
         mock_request = MagicMock()
         mock_request.client.host = "127.0.0.1"
@@ -524,8 +501,7 @@ class TestChangePassword:
         )
 
         body = PasswordChangeRequest(
-            current_password="correctpassword",
-            new_password="newpassword123"
+            current_password="correctpassword", new_password="newpassword123"
         )
 
         mock_user = MagicMock()
@@ -545,9 +521,7 @@ class TestChangePassword:
             mock_session_maker.return_value.__aenter__.return_value = mock_session
 
             result = await change_password(
-                request=mock_request,
-                body=body,
-                current_user=current_user
+                request=mock_request, body=body, current_user=current_user
             )
 
             assert result is None

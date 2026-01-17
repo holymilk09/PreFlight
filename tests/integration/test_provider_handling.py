@@ -57,9 +57,7 @@ class TestEvaluateWithProviders:
     """Tests for /v1/evaluate with provider handling."""
 
     @pytest.mark.asyncio
-    async def test_evaluate_with_known_provider(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_evaluate_with_known_provider(self, authenticated_client: AsyncClient):
         """Evaluate with known provider should not have unknown provider warning."""
         response = await authenticated_client.post(
             "/v1/evaluate",
@@ -98,9 +96,7 @@ class TestEvaluateWithProviders:
         assert not any("Unknown provider" in a for a in data.get("alerts", []))
 
     @pytest.mark.asyncio
-    async def test_evaluate_with_unknown_provider(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_evaluate_with_unknown_provider(self, authenticated_client: AsyncClient):
         """Evaluate with unknown provider should have warning and penalty."""
         response = await authenticated_client.post(
             "/v1/evaluate",
@@ -139,9 +135,7 @@ class TestEvaluateWithProviders:
         assert any("Unknown provider" in a for a in data.get("alerts", []))
 
     @pytest.mark.asyncio
-    async def test_evaluate_case_insensitive_vendor(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_evaluate_case_insensitive_vendor(self, authenticated_client: AsyncClient):
         """Vendor lookup should be case-insensitive."""
         response = await authenticated_client.post(
             "/v1/evaluate",
@@ -180,9 +174,7 @@ class TestEvaluateWithProviders:
         assert not any("Unknown provider" in a for a in data.get("alerts", []))
 
     @pytest.mark.asyncio
-    async def test_evaluate_stores_full_extractor_metadata(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_evaluate_stores_full_extractor_metadata(self, authenticated_client: AsyncClient):
         """Evaluation should store full extractor metadata."""
         response = await authenticated_client.post(
             "/v1/evaluate",
@@ -238,9 +230,7 @@ class TestSafeguardWarnings:
     """Tests for safeguard warnings in evaluate response."""
 
     @pytest.mark.asyncio
-    async def test_zero_elements_error_in_alerts(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_zero_elements_error_in_alerts(self, authenticated_client: AsyncClient):
         """Zero elements should produce error in alerts."""
         response = await authenticated_client.post(
             "/v1/evaluate",
@@ -279,9 +269,7 @@ class TestSafeguardWarnings:
         assert any("ERROR:" in a and "Zero elements" in a for a in data.get("alerts", []))
 
     @pytest.mark.asyncio
-    async def test_excessive_latency_warning(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_excessive_latency_warning(self, authenticated_client: AsyncClient):
         """Excessive latency should produce warning."""
         response = await authenticated_client.post(
             "/v1/evaluate",
@@ -324,9 +312,7 @@ class TestProviderCalibration:
     """Tests for provider-specific calibration effects."""
 
     @pytest.mark.asyncio
-    async def test_azure_confidence_calibrated(
-        self, authenticated_client: AsyncClient
-    ):
+    async def test_azure_confidence_calibrated(self, authenticated_client: AsyncClient):
         """Azure's confidence multiplier should affect reliability."""
         # First, create a template to get a MATCH decision
         template_response = await authenticated_client.post(

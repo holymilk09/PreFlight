@@ -1,7 +1,8 @@
 """Tests for database connection and utilities."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from uuid_extensions import uuid7
 
 
@@ -30,7 +31,6 @@ class TestGetTenantSession:
     @pytest.mark.asyncio
     async def test_get_tenant_session_sets_context(self):
         """Should set tenant context for RLS."""
-        from sqlalchemy import text
         from src.db import get_tenant_session
 
         tenant_id = uuid7()

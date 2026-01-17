@@ -5,15 +5,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import SQLModel
 
 from src.audit import log_audit_event
 from src.config import settings
 from src.db import async_session_maker
-from pydantic import Field
-from sqlmodel import SQLModel
-
 from src.models import (
     AuditAction,
     AuthResponse,
@@ -357,7 +355,9 @@ class PasswordChangeRequest(SQLModel):
     """Request body for password change."""
 
     current_password: str = Field(max_length=128, description="Current password")
-    new_password: str = Field(min_length=8, max_length=128, description="New password (min 8 chars)")
+    new_password: str = Field(
+        min_length=8, max_length=128, description="New password (min 8 chars)"
+    )
 
 
 @router.post(

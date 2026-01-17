@@ -135,8 +135,13 @@ class TestDataCompleteness:
             has_footer=True,
             bounding_boxes=[
                 BoundingBox(
-                    x=0.1, y=0.1, width=0.3, height=0.1,
-                    element_type="text", confidence=0.95, reading_order=0,
+                    x=0.1,
+                    y=0.1,
+                    width=0.3,
+                    height=0.1,
+                    element_type="text",
+                    confidence=0.95,
+                    reading_order=0,
                 ),
             ],  # Only 1 bbox for 1000 elements
         )
@@ -164,8 +169,13 @@ class TestLayoutConsistency:
             has_footer=False,
             bounding_boxes=[
                 BoundingBox(
-                    x=0.1, y=0.1, width=0.0, height=0.1,  # Zero width
-                    element_type="text", confidence=0.95, reading_order=0,
+                    x=0.1,
+                    y=0.1,
+                    width=0.0,
+                    height=0.1,  # Zero width
+                    element_type="text",
+                    confidence=0.95,
+                    reading_order=0,
                 ),
             ],
         )
@@ -189,8 +199,13 @@ class TestLayoutConsistency:
             has_footer=False,
             bounding_boxes=[
                 BoundingBox(
-                    x=0.9, y=0.1, width=0.3, height=0.1,  # Exceeds bounds
-                    element_type="text", confidence=0.95, reading_order=0,
+                    x=0.9,
+                    y=0.1,
+                    width=0.3,
+                    height=0.1,  # Exceeds bounds
+                    element_type="text",
+                    confidence=0.95,
+                    reading_order=0,
                 ),
             ],
         )
@@ -238,9 +253,13 @@ class TestProviderSpecificChecks:
             has_footer=False,
             bounding_boxes=[
                 BoundingBox(
-                    x=0.1, y=0.1, width=0.3, height=0.1,
+                    x=0.1,
+                    y=0.1,
+                    width=0.3,
+                    height=0.1,
                     element_type="unknown_type",  # Not in AWS supported types
-                    confidence=0.95, reading_order=0,
+                    confidence=0.95,
+                    reading_order=0,
                 ),
             ],
         )
@@ -399,7 +418,15 @@ class TestAdditionalEdgeCases:
             has_header=True,
             has_footer=False,
             bounding_boxes=[
-                BoundingBox(x=0.1, y=0.1, width=0.0, height=0.1, element_type="text", confidence=0.95, reading_order=i)
+                BoundingBox(
+                    x=0.1,
+                    y=0.1,
+                    width=0.0,
+                    height=0.1,
+                    element_type="text",
+                    confidence=0.95,
+                    reading_order=i,
+                )
                 for i in range(5)  # 5 zero-area boxes
             ],
         )
@@ -422,7 +449,15 @@ class TestAdditionalEdgeCases:
             has_header=True,
             has_footer=False,
             bounding_boxes=[
-                BoundingBox(x=0.9, y=0.1, width=0.3, height=0.1, element_type="text", confidence=0.95, reading_order=i)
+                BoundingBox(
+                    x=0.9,
+                    y=0.1,
+                    width=0.3,
+                    height=0.1,
+                    element_type="text",
+                    confidence=0.95,
+                    reading_order=i,
+                )
                 for i in range(5)  # 5 out-of-bounds boxes
             ],
         )
@@ -451,7 +486,9 @@ class TestAdditionalEdgeCases:
 
         assert any("Text density is 0 but text blocks exist" in w for w in warnings)
 
-    def test_many_unknown_element_types_truncation(self, safeguard_engine, valid_extractor, aws_provider):
+    def test_many_unknown_element_types_truncation(
+        self, safeguard_engine, valid_extractor, aws_provider
+    ):
         """Should truncate unknown element types list when more than 5."""
         features = StructuralFeatures(
             element_count=10,
@@ -465,7 +502,15 @@ class TestAdditionalEdgeCases:
             has_header=True,
             has_footer=False,
             bounding_boxes=[
-                BoundingBox(x=0.1, y=float(i)/20, width=0.3, height=0.05, element_type=f"unknown_type_{i}", confidence=0.95, reading_order=i)
+                BoundingBox(
+                    x=0.1,
+                    y=float(i) / 20,
+                    width=0.3,
+                    height=0.05,
+                    element_type=f"unknown_type_{i}",
+                    confidence=0.95,
+                    reading_order=i,
+                )
                 for i in range(8)  # 8 different unknown types
             ],
         )
@@ -538,7 +583,15 @@ class TestAdditionalEdgeCases:
             has_header=True,
             has_footer=False,
             bounding_boxes=[
-                BoundingBox(x=0.1, y=0.1, width=0.3, height=0.1, element_type="text", confidence=0.95, reading_order=0),
+                BoundingBox(
+                    x=0.1,
+                    y=0.1,
+                    width=0.3,
+                    height=0.1,
+                    element_type="text",
+                    confidence=0.95,
+                    reading_order=0,
+                ),
             ],
         )
 

@@ -1,8 +1,9 @@
 """Tests for rate limiter with circuit breaker."""
 
-import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 class TestRateLimitResult:
@@ -164,8 +165,9 @@ class TestCheckRateLimit:
     @pytest.mark.asyncio
     async def test_check_rate_limit_handles_redis_error(self):
         """Should fail-open when Redis is unavailable."""
-        import src.services.rate_limiter as rate_limiter
         from redis.exceptions import RedisError
+
+        import src.services.rate_limiter as rate_limiter
 
         # Reset circuit breaker
         rate_limiter._circuit_breaker_open = False
@@ -284,6 +286,7 @@ class TestRateLimiter:
     async def test_rate_limiter_handles_no_script_error(self):
         """Should reload script when it's flushed from Redis."""
         from redis.exceptions import NoScriptError
+
         from src.services.rate_limiter import RateLimiter
 
         mock_redis = AsyncMock()

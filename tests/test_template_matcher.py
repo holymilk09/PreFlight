@@ -201,7 +201,9 @@ class TestMatchTemplate:
         assert confidence == 1.0
 
     @pytest.mark.asyncio
-    async def test_match_template_no_exact_match_falls_back_to_scan(self, sample_structural_features):
+    async def test_match_template_no_exact_match_falls_back_to_scan(
+        self, sample_structural_features
+    ):
         """No exact fingerprint match should fall back to scan."""
         tenant_id = uuid4()
         fingerprint = "b" * 64
@@ -320,7 +322,9 @@ class TestMatchWithScan:
         assert confidence >= 0.50  # Should be above minimum threshold
 
     @pytest.mark.asyncio
-    async def test_match_with_scan_below_threshold(self, sample_structural_features, high_drift_features):
+    async def test_match_with_scan_below_threshold(
+        self, sample_structural_features, high_drift_features
+    ):
         """Template below similarity threshold should not match."""
         tenant_id = uuid4()
         template_id = uuid4()

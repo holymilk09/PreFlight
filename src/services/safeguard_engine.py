@@ -101,14 +101,20 @@ class SafeguardEngine:
         if zero_area_count > 3:
             issues.append(f"WARN: {zero_area_count} total zero-area bounding boxes detected")
         if out_of_bounds_count > 3:
-            issues.append(f"WARN: {out_of_bounds_count} total out-of-bounds bounding boxes detected")
+            issues.append(
+                f"WARN: {out_of_bounds_count} total out-of-bounds bounding boxes detected"
+            )
 
         # Check for suspicious layout metrics
         if features.layout_complexity > 0.95:
-            issues.append("WARN: Extremely high layout complexity (>0.95) - document may be corrupted")
+            issues.append(
+                "WARN: Extremely high layout complexity (>0.95) - document may be corrupted"
+            )
 
         if features.text_density == 0 and features.text_block_count > 0:
-            issues.append("WARN: Text density is 0 but text blocks exist - check density calculation")
+            issues.append(
+                "WARN: Text density is 0 but text blocks exist - check density calculation"
+            )
 
         return issues
 
@@ -189,7 +195,11 @@ class SafeguardEngine:
             issues.append("WARN: Perfect confidence score (1.0) is unusual - verify extraction")
 
         # Multi-page with no tables might indicate scan issues
-        if features.page_count > 10 and features.table_count == 0 and features.text_block_count < 50:
+        if (
+            features.page_count > 10
+            and features.table_count == 0
+            and features.text_block_count < 50
+        ):
             issues.append(
                 f"WARN: {features.page_count} pages with no tables and few text blocks "
                 f"({features.text_block_count}) - possible scan/extraction failure"

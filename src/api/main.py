@@ -33,7 +33,8 @@ if settings.sentry_dsn:
         # Filter out health check endpoints from traces
         traces_sampler=lambda ctx: (
             0.0
-            if ctx.get("wsgi_environ", {}).get("PATH_INFO") in ("/health", "/ready", "/metrics", "/")
+            if ctx.get("wsgi_environ", {}).get("PATH_INFO")
+            in ("/health", "/ready", "/metrics", "/")
             else settings.sentry_traces_sample_rate
         ),
     )

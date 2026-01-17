@@ -1,10 +1,10 @@
 """Tests for API key authentication."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from fastapi import HTTPException
 
 
@@ -112,9 +112,7 @@ class TestValidateApiKey:
             mock_maker.return_value = mock_cm
 
             with pytest.raises(HTTPException) as exc:
-                await validate_api_key(
-                    mock_request, "cp_12345678901234567890123456789012"
-                )
+                await validate_api_key(mock_request, "cp_12345678901234567890123456789012")
 
             assert exc.value.status_code == 401
             assert "Invalid API key" in exc.value.detail
@@ -155,9 +153,7 @@ class TestValidateApiKey:
             mock_maker.return_value = mock_cm
 
             with pytest.raises(HTTPException) as exc:
-                await validate_api_key(
-                    mock_request, "cp_12345678901234567890123456789012"
-                )
+                await validate_api_key(mock_request, "cp_12345678901234567890123456789012")
 
             assert exc.value.status_code == 401
             assert "revoked" in exc.value.detail
@@ -200,9 +196,7 @@ class TestValidateApiKey:
             mock_cm.__aexit__.return_value = None
             mock_maker.return_value = mock_cm
 
-            result = await validate_api_key(
-                mock_request, "cp_12345678901234567890123456789012"
-            )
+            result = await validate_api_key(mock_request, "cp_12345678901234567890123456789012")
 
             assert isinstance(result, AuthenticatedTenant)
             assert result.tenant_id == tenant_id
@@ -250,48 +244,55 @@ class TestAuditEvents:
     @pytest.mark.asyncio
     async def test_log_audit_event_warning_for_auth_failed(self):
         """Should log at warning level for AUTH_FAILED."""
-        from src.audit import log_audit_event
-        from src.models import AuditAction
         from unittest.mock import patch
 
-        with patch("src.audit.logger") as mock_logger:
-            with patch("src.audit.async_session_maker") as mock_maker:
-                mock_session = AsyncMock()
-                mock_maker.return_value.__aenter__.return_value = mock_session
+        from src.audit import log_audit_event
+        from src.models import AuditAction
 
-                await log_audit_event(
-                    action=AuditAction.AUTH_FAILED,
-                    tenant_id=None,
-                    actor_id=None,
-                )
+        with (
+            patch("src.audit.logger") as mock_logger,
+            patch("src.audit.async_session_maker") as mock_maker,
+        ):
+            mock_session = AsyncMock()
+            mock_maker.return_value.__aenter__.return_value = mock_session
 
-                mock_logger.warning.assert_called()
+            await log_audit_event(
+                action=AuditAction.AUTH_FAILED,
+                tenant_id=None,
+                actor_id=None,
+            )
+
+            mock_logger.warning.assert_called()
 
     @pytest.mark.asyncio
     async def test_log_audit_event_info_for_other_actions(self):
         """Should log at info level for other actions."""
-        from src.audit import log_audit_event
-        from src.models import AuditAction
         from unittest.mock import patch
 
-        with patch("src.audit.logger") as mock_logger:
-            with patch("src.audit.async_session_maker") as mock_maker:
-                mock_session = AsyncMock()
-                mock_maker.return_value.__aenter__.return_value = mock_session
+        from src.audit import log_audit_event
+        from src.models import AuditAction
 
-                await log_audit_event(
-                    action=AuditAction.API_KEY_CREATED,
-                    tenant_id=uuid4(),
-                    actor_id=uuid4(),
-                )
+        with (
+            patch("src.audit.logger") as mock_logger,
+            patch("src.audit.async_session_maker") as mock_maker,
+        ):
+            mock_session = AsyncMock()
+            mock_maker.return_value.__aenter__.return_value = mock_session
 
-                mock_logger.info.assert_called()
+            await log_audit_event(
+                action=AuditAction.API_KEY_CREATED,
+                tenant_id=uuid4(),
+                actor_id=uuid4(),
+            )
+
+            mock_logger.info.assert_called()
 
     @pytest.mark.asyncio
     async def test_log_failed_auth_with_request_id(self):
         """Should include request ID when provided."""
-        from src.api.auth import _log_failed_auth
         from uuid import UUID
+
+        from src.api.auth import _log_failed_auth
 
         request_id = str(uuid4())
         mock_session = AsyncMock()

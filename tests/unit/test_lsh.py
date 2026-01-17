@@ -335,12 +335,17 @@ class TestMinHashLSHWithMockedRedis:
     async def test_initialize_success(self):
         """Should initialize successfully with Redis."""
         from unittest.mock import AsyncMock, patch
+
         from src.services.lsh_index import MinHashLSH
 
         lsh = MinHashLSH()
         mock_redis = AsyncMock()
 
-        with patch("src.services.rate_limiter.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+        with patch(
+            "src.services.rate_limiter.get_redis_client",
+            new_callable=AsyncMock,
+            return_value=mock_redis,
+        ):
             result = await lsh.initialize()
 
         assert result is True
@@ -351,11 +356,16 @@ class TestMinHashLSHWithMockedRedis:
     async def test_initialize_failure(self):
         """Should handle Redis connection failure gracefully."""
         from unittest.mock import AsyncMock, patch
+
         from src.services.lsh_index import MinHashLSH
 
         lsh = MinHashLSH()
 
-        with patch("src.services.rate_limiter.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Connection failed")):
+        with patch(
+            "src.services.rate_limiter.get_redis_client",
+            new_callable=AsyncMock,
+            side_effect=Exception("Connection failed"),
+        ):
             result = await lsh.initialize()
 
         assert result is False
@@ -399,14 +409,28 @@ class TestMinHashLSHWithMockedRedis:
 class TestGetLshIndex:
     """Tests for get_lsh_index singleton function."""
 
+    @pytest.fixture(autouse=True)
+    def reset_lsh_index(self):
+        """Reset global LSH index state before and after each test."""
+        import src.services.lsh_index as lsh_module
+
+        # Store original state
+        original = lsh_module._lsh_index
+
+        # Reset before test
+        lsh_module._lsh_index = None
+
+        yield
+
+        # Reset after test to prevent pollution
+        lsh_module._lsh_index = original
+
     @pytest.mark.asyncio
     async def test_get_lsh_index_creates_instance(self):
         """Should create and initialize LSH index on first call."""
         from unittest.mock import AsyncMock, patch
-        import src.services.lsh_index as lsh_module
 
-        # Reset global state
-        lsh_module._lsh_index = None
+        import src.services.lsh_index as lsh_module
 
         mock_lsh = AsyncMock()
         mock_lsh.initialize = AsyncMock(return_value=True)
@@ -421,6 +445,7 @@ class TestGetLshIndex:
     async def test_get_lsh_index_returns_existing(self):
         """Should return existing instance on subsequent calls."""
         from unittest.mock import AsyncMock
+
         import src.services.lsh_index as lsh_module
 
         mock_lsh = AsyncMock()

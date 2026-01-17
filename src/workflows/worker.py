@@ -6,7 +6,6 @@ Run this as a separate process to handle workflow executions.
 
 import asyncio
 import signal
-import sys
 from contextlib import suppress
 
 import structlog
@@ -14,8 +13,6 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from src.config import settings
-
-logger = structlog.get_logger(__name__)
 from src.workflows.activities import (
     compute_drift_activity,
     compute_reliability_activity,
@@ -23,6 +20,8 @@ from src.workflows.activities import (
     select_rules_activity,
 )
 from src.workflows.document_processing import DocumentProcessingWorkflow
+
+logger = structlog.get_logger(__name__)
 
 # Task queue name for PreFlight workflows
 TASK_QUEUE = "preflight-tasks"
@@ -86,7 +85,7 @@ async def run_worker() -> None:
                 Client.connect(settings.temporal_host),
                 timeout=30.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("temporal_connection_timeout", host=settings.temporal_host)
             raise RuntimeError(f"Failed to connect to Temporal at {settings.temporal_host}")
 

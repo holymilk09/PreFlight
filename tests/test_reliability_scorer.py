@@ -195,7 +195,9 @@ class TestGetReliabilityBreakdown:
         total_weight = sum(c["weight"] for c in breakdown["components"].values())
         assert total_weight == pytest.approx(1.0, abs=0.01)
 
-    def test_breakdown_known_extractor(self, sample_template, sample_extractor_metadata, nvidia_provider):
+    def test_breakdown_known_extractor(
+        self, sample_template, sample_extractor_metadata, nvidia_provider
+    ):
         """Verify known extractor is correctly identified."""
         breakdown = get_reliability_breakdown(
             template=sample_template,

@@ -90,7 +90,7 @@ async def match_template_activity(input: MatchTemplateInput) -> MatchTemplateOut
         # Set tenant context for RLS using parameterized set_config()
         await db.execute(
             text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
-            {"tenant_id": str(tenant_id)}
+            {"tenant_id": str(tenant_id)},
         )
 
         # Quick check: exact fingerprint match

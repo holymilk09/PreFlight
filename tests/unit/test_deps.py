@@ -1,8 +1,10 @@
 """Tests for API dependencies."""
 
-import pytest
+from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 
 
 class TestGetDbSession:
@@ -44,10 +46,8 @@ class TestGetDbSession:
             assert session == mock_session
 
             # Simulate exception by closing the generator
-            try:
+            with suppress(ValueError):
                 await gen.athrow(ValueError("Test error"))
-            except ValueError:
-                pass
 
             mock_session.close.assert_called_once()
 

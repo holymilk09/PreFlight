@@ -1,7 +1,8 @@
 """Tests for API main module middleware and configuration."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import Request
 from fastapi.responses import JSONResponse
 

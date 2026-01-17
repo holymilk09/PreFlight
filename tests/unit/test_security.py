@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import jwt as pyjwt
-import pytest
 
 from src.config import settings
 from src.security import (
