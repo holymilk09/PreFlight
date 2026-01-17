@@ -42,77 +42,92 @@ class TestRateLimitResult:
 class TestCircuitBreaker:
     """Tests for circuit breaker functions."""
 
-    def test_record_failure_increments_counter(self):
+    @pytest.mark.asyncio
+    async def test_record_failure_increments_counter(self):
         """Should increment failure counter."""
         import src.services.rate_limiter as rate_limiter
 
         # Reset state
         rate_limiter._circuit_breaker_failures = 0
         rate_limiter._circuit_breaker_open = False
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        rate_limiter._record_failure()
+        await rate_limiter._record_failure()
 
         assert rate_limiter._circuit_breaker_failures == 1
         assert rate_limiter._circuit_breaker_open is False
 
-    def test_record_failure_opens_circuit_at_threshold(self):
+    @pytest.mark.asyncio
+    async def test_record_failure_opens_circuit_at_threshold(self):
         """Should open circuit when threshold is reached."""
         import src.services.rate_limiter as rate_limiter
 
         # Reset state
         rate_limiter._circuit_breaker_failures = rate_limiter.CIRCUIT_BREAKER_THRESHOLD - 1
         rate_limiter._circuit_breaker_open = False
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        rate_limiter._record_failure()
+        await rate_limiter._record_failure()
 
         assert rate_limiter._circuit_breaker_failures == rate_limiter.CIRCUIT_BREAKER_THRESHOLD
         assert rate_limiter._circuit_breaker_open is True
 
-    def test_record_success_resets_circuit(self):
+    @pytest.mark.asyncio
+    async def test_record_success_resets_circuit(self):
         """Should reset circuit breaker on success."""
         import src.services.rate_limiter as rate_limiter
 
         # Set up open circuit
         rate_limiter._circuit_breaker_failures = 5
         rate_limiter._circuit_breaker_open = True
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        rate_limiter._record_success()
+        await rate_limiter._record_success()
 
         assert rate_limiter._circuit_breaker_failures == 0
         assert rate_limiter._circuit_breaker_open is False
 
-    def test_record_success_no_op_when_healthy(self):
+    @pytest.mark.asyncio
+    async def test_record_success_no_op_when_healthy(self):
         """Should not change state when already healthy."""
         import src.services.rate_limiter as rate_limiter
 
         # Already healthy
         rate_limiter._circuit_breaker_failures = 0
         rate_limiter._circuit_breaker_open = False
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        rate_limiter._record_success()
+        await rate_limiter._record_success()
 
         # State should remain unchanged
         assert rate_limiter._circuit_breaker_failures == 0
         assert rate_limiter._circuit_breaker_open is False
 
-    def test_should_attempt_rate_limit_when_closed(self):
+    @pytest.mark.asyncio
+    async def test_should_attempt_rate_limit_when_closed(self):
         """Should allow rate limit attempts when circuit is closed."""
         import src.services.rate_limiter as rate_limiter
 
         rate_limiter._circuit_breaker_open = False
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        assert rate_limiter._should_attempt_rate_limit() is True
+        result = await rate_limiter._should_attempt_rate_limit()
+        assert result is True
 
-    def test_should_attempt_rate_limit_when_open_and_recent(self):
+    @pytest.mark.asyncio
+    async def test_should_attempt_rate_limit_when_open_and_recent(self):
         """Should not allow rate limit when circuit is open and failure is recent."""
         import src.services.rate_limiter as rate_limiter
 
         rate_limiter._circuit_breaker_open = True
         rate_limiter._circuit_breaker_last_failure = time.time()
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        assert rate_limiter._should_attempt_rate_limit() is False
+        result = await rate_limiter._should_attempt_rate_limit()
+        assert result is False
 
-    def test_should_attempt_rate_limit_half_open_state(self):
+    @pytest.mark.asyncio
+    async def test_should_attempt_rate_limit_half_open_state(self):
         """Should allow rate limit in half-open state after reset time."""
         import src.services.rate_limiter as rate_limiter
 
@@ -121,8 +136,10 @@ class TestCircuitBreaker:
         rate_limiter._circuit_breaker_last_failure = (
             time.time() - rate_limiter.CIRCUIT_BREAKER_RESET_SECONDS - 1
         )
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
-        assert rate_limiter._should_attempt_rate_limit() is True
+        result = await rate_limiter._should_attempt_rate_limit()
+        assert result is True
 
 
 class TestCheckRateLimit:
@@ -136,6 +153,7 @@ class TestCheckRateLimit:
         # Open circuit breaker
         rate_limiter._circuit_breaker_open = True
         rate_limiter._circuit_breaker_last_failure = time.time()
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
         result = await rate_limiter.check_rate_limit("test-key", 100)
 
@@ -152,6 +170,7 @@ class TestCheckRateLimit:
         # Reset circuit breaker
         rate_limiter._circuit_breaker_open = False
         rate_limiter._circuit_breaker_failures = 0
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
         # Mock Redis to raise error
         with patch.object(rate_limiter, "_get_rate_limiter") as mock_get:
@@ -172,6 +191,7 @@ class TestCheckRateLimit:
         # Reset circuit breaker
         rate_limiter._circuit_breaker_open = False
         rate_limiter._circuit_breaker_failures = 1  # Some previous failures
+        rate_limiter._circuit_breaker_lock = None  # Reset lock for clean test
 
         # Mock successful rate limit check
         mock_result = rate_limiter.RateLimitResult(

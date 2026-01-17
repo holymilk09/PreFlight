@@ -28,6 +28,8 @@ from src.security import (
     create_access_token,
     decode_access_token,
     hash_password,
+    is_token_revoked_async,
+    revoke_token,
     verify_password,
 )
 
@@ -48,7 +50,7 @@ async def get_current_user(
     """Validate bearer token and return current user data.
 
     Raises:
-        HTTPException 401: If token is missing or invalid.
+        HTTPException 401: If token is missing, invalid, or revoked.
     """
     if not credentials:
         raise HTTPException(
@@ -57,12 +59,21 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token_data = decode_access_token(credentials.credentials)
+    # Decode without blocklist check first (we'll check async)
+    token_data = decode_access_token(credentials.credentials, check_blocklist=False)
 
     if not token_data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Check if token is revoked (async Redis check)
+    if token_data.jti and await is_token_revoked_async(token_data.jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -291,24 +302,26 @@ async def logout(
     request: Request,
     current_user: CurrentUser,
 ) -> None:
-    """Logout the current user.
+    """Logout the current user and revoke their token.
 
-    With JWT tokens, logout is primarily client-side (discard the token).
-    This endpoint logs the logout event for audit purposes.
-
-    Note: Token revocation would require a blocklist (Redis) which adds
-    complexity. For now, tokens expire naturally.
+    The token is added to a Redis blocklist until it naturally expires.
+    This prevents the token from being used even if the client doesn't discard it.
     """
+    # Revoke the token by adding to blocklist
+    if current_user.jti:
+        revoked = await revoke_token(current_user.jti, current_user.exp)
+    else:
+        revoked = False
+
     await log_audit_event(
         action=AuditAction.USER_LOGOUT,
         tenant_id=current_user.tenant_id,
         actor_id=current_user.user_id,
         resource_type="user",
         resource_id=current_user.user_id,
-        details={"email": current_user.email},
+        details={"email": current_user.email, "token_revoked": revoked},
         ip_address=request.client.host if request.client else None,
     )
-    # Client should discard the token
     return None
 
 

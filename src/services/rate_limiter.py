@@ -1,5 +1,6 @@
 """Redis-based rate limiting using sliding window algorithm."""
 
+import asyncio
 import time
 from dataclasses import dataclass
 
@@ -128,14 +129,26 @@ class RateLimiter:
 _redis_client: aioredis.Redis | None = None
 _rate_limiter: RateLimiter | None = None
 
-# Circuit breaker state
+# Circuit breaker state (protected by lock)
 _circuit_breaker_failures: int = 0
 _circuit_breaker_last_failure: float = 0.0
 _circuit_breaker_open: bool = False
+_circuit_breaker_lock: asyncio.Lock | None = None
 
 # Circuit breaker configuration
 CIRCUIT_BREAKER_THRESHOLD = 5  # Number of failures to open circuit
 CIRCUIT_BREAKER_RESET_SECONDS = 30  # Time before attempting to close circuit
+
+
+def _get_circuit_breaker_lock() -> asyncio.Lock:
+    """Get or create the circuit breaker lock.
+
+    Creates the lock lazily to ensure it's created in the correct event loop.
+    """
+    global _circuit_breaker_lock
+    if _circuit_breaker_lock is None:
+        _circuit_breaker_lock = asyncio.Lock()
+    return _circuit_breaker_lock
 
 
 async def get_redis_client() -> aioredis.Redis:
@@ -172,42 +185,47 @@ async def _get_rate_limiter() -> RateLimiter:
     return _rate_limiter
 
 
-def _record_failure() -> None:
-    """Record a rate limiting failure for circuit breaker."""
+async def _record_failure() -> None:
+    """Record a rate limiting failure for circuit breaker (thread-safe)."""
     global _circuit_breaker_failures, _circuit_breaker_last_failure, _circuit_breaker_open
-    _circuit_breaker_failures += 1
-    _circuit_breaker_last_failure = time.time()
-    if _circuit_breaker_failures >= CIRCUIT_BREAKER_THRESHOLD:
-        _circuit_breaker_open = True
-        logger.warning(
-            "rate_limiter_circuit_breaker_open",
-            failures=_circuit_breaker_failures,
-            threshold=CIRCUIT_BREAKER_THRESHOLD,
-        )
+    lock = _get_circuit_breaker_lock()
+    async with lock:
+        _circuit_breaker_failures += 1
+        _circuit_breaker_last_failure = time.time()
+        if _circuit_breaker_failures >= CIRCUIT_BREAKER_THRESHOLD:
+            _circuit_breaker_open = True
+            logger.warning(
+                "rate_limiter_circuit_breaker_open",
+                failures=_circuit_breaker_failures,
+                threshold=CIRCUIT_BREAKER_THRESHOLD,
+            )
 
 
-def _record_success() -> None:
-    """Record a rate limiting success for circuit breaker."""
+async def _record_success() -> None:
+    """Record a rate limiting success for circuit breaker (thread-safe)."""
     global _circuit_breaker_failures, _circuit_breaker_open
-    if _circuit_breaker_failures > 0 or _circuit_breaker_open:
-        _circuit_breaker_failures = 0
-        _circuit_breaker_open = False
-        logger.info("rate_limiter_circuit_breaker_closed")
+    lock = _get_circuit_breaker_lock()
+    async with lock:
+        if _circuit_breaker_failures > 0 or _circuit_breaker_open:
+            _circuit_breaker_failures = 0
+            _circuit_breaker_open = False
+            logger.info("rate_limiter_circuit_breaker_closed")
 
 
-def _should_attempt_rate_limit() -> bool:
-    """Check if we should attempt rate limiting based on circuit breaker state."""
+async def _should_attempt_rate_limit() -> bool:
+    """Check if we should attempt rate limiting based on circuit breaker state (thread-safe)."""
     global _circuit_breaker_open, _circuit_breaker_last_failure
+    lock = _get_circuit_breaker_lock()
+    async with lock:
+        if not _circuit_breaker_open:
+            return True
 
-    if not _circuit_breaker_open:
-        return True
+        # Check if enough time has passed to try again (half-open state)
+        if time.time() - _circuit_breaker_last_failure > CIRCUIT_BREAKER_RESET_SECONDS:
+            logger.info("rate_limiter_circuit_breaker_half_open", attempting_reset=True)
+            return True
 
-    # Check if enough time has passed to try again (half-open state)
-    if time.time() - _circuit_breaker_last_failure > CIRCUIT_BREAKER_RESET_SECONDS:
-        logger.info("rate_limiter_circuit_breaker_half_open", attempting_reset=True)
-        return True
-
-    return False
+        return False
 
 
 async def check_rate_limit(
@@ -229,7 +247,7 @@ async def check_rate_limit(
         RateLimitResult with status
     """
     # Check circuit breaker state
-    if not _should_attempt_rate_limit():
+    if not await _should_attempt_rate_limit():
         # Circuit is open - fail-open (allow request)
         logger.debug(
             "rate_limit_circuit_breaker_bypass",
@@ -246,12 +264,12 @@ async def check_rate_limit(
         limiter = await _get_rate_limiter()
         key = f"{prefix}:{identifier}"
         result = await limiter.check(key, limit)
-        _record_success()
+        await _record_success()
         return result
 
     except (RedisError, ConnectionError, TimeoutError, OSError) as e:
         # Redis unavailable - fail-open (allow request)
-        _record_failure()
+        await _record_failure()
         logger.warning(
             "rate_limit_redis_unavailable",
             error_type=type(e).__name__,

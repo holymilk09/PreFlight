@@ -84,12 +84,15 @@ class TestGetTenantDb:
             session = await gen.__anext__()
             assert session == mock_session
 
-            # Verify SET LOCAL was called
+            # Verify set_config was called with parameterized query
             mock_session.execute.assert_called_once()
             call_args = mock_session.execute.call_args
             # Get the text clause from the first positional argument
             text_clause = call_args[0][0]
-            assert "SET LOCAL app.tenant_id" in str(text_clause.text)
+            assert "set_config('app.tenant_id'" in str(text_clause.text)
+            # Verify the tenant_id was passed as a parameter (second positional arg)
+            params = call_args[0][1]
+            assert params["tenant_id"] == str(tenant_id)
 
             # Close generator properly
             await gen.aclose()

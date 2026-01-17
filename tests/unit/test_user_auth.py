@@ -56,6 +56,7 @@ class TestGetCurrentUser:
             email="test@example.com",
             role="admin",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         mock_credentials = HTTPAuthorizationCredentials(
@@ -63,7 +64,10 @@ class TestGetCurrentUser:
             credentials="valid_token"
         )
 
-        with patch("src.api.user_auth.decode_access_token", return_value=expected_token_data):
+        with (
+            patch("src.api.user_auth.decode_access_token", return_value=expected_token_data),
+            patch("src.api.user_auth.is_token_revoked_async", return_value=False),
+        ):
             result = await get_current_user(credentials=mock_credentials)
 
             assert result == expected_token_data
@@ -303,6 +307,7 @@ class TestGetMe:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         mock_session = AsyncMock()
@@ -331,6 +336,7 @@ class TestGetMe:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         mock_user = MagicMock()
@@ -373,9 +379,13 @@ class TestLogout:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
-        with patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock) as mock_log:
+        with (
+            patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock) as mock_log,
+            patch("src.api.user_auth.revoke_token", new_callable=AsyncMock, return_value=True),
+        ):
             result = await logout(request=mock_request, current_user=current_user)
 
             assert result is None
@@ -396,6 +406,7 @@ class TestRefreshToken:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         with patch("src.api.user_auth.create_access_token", return_value="new_token"):
@@ -423,6 +434,7 @@ class TestChangePassword:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         body = PasswordChangeRequest(
@@ -462,6 +474,7 @@ class TestChangePassword:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         body = PasswordChangeRequest(
@@ -507,6 +520,7 @@ class TestChangePassword:
             email="test@example.com",
             role="user",
             exp=datetime.utcnow(),
+            jti="test-jti-12345",
         )
 
         body = PasswordChangeRequest(

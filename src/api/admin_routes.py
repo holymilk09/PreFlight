@@ -37,6 +37,24 @@ async def require_admin(
     return tenant
 
 
+def check_tenant_access(admin: AuthenticatedTenant, target_tenant_id: UUID) -> None:
+    """Verify admin has access to the target tenant.
+
+    Raises 403 if admin doesn't have superadmin scope and is trying
+    to access a different tenant's resources.
+    """
+    # Superadmin scope allows access to any tenant
+    if admin.has_scope("superadmin"):
+        return
+
+    # Regular admins can only access their own tenant
+    if admin.tenant_id != target_tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only access resources for your own tenant.",
+        )
+
+
 AdminTenant = Annotated[AuthenticatedTenant, Depends(require_admin)]
 
 
@@ -193,6 +211,8 @@ async def get_tenant(
     admin: AdminTenant,
 ) -> TenantResponse:
     """Get details of a specific tenant."""
+    check_tenant_access(admin, tenant_id)
+
     async with async_session_maker() as session:
         stmt = select(Tenant).where(Tenant.id == tenant_id)
         result = await session.execute(stmt)
@@ -234,6 +254,8 @@ async def update_tenant(
     admin: AdminTenant,
 ) -> TenantResponse:
     """Update a tenant's details."""
+    check_tenant_access(admin, tenant_id)
+
     async with async_session_maker() as session:
         stmt = select(Tenant).where(Tenant.id == tenant_id)
         result = await session.execute(stmt)
@@ -290,6 +312,8 @@ async def delete_tenant(
     This doesn't actually delete the tenant data, but makes it inaccessible
     by revoking all associated API keys.
     """
+    check_tenant_access(admin, tenant_id)
+
     async with async_session_maker() as session:
         # Verify tenant exists
         stmt = select(Tenant).where(Tenant.id == tenant_id)
@@ -351,6 +375,8 @@ async def create_api_key(
     The full API key is returned only once in this response.
     Store it securely - it cannot be retrieved again.
     """
+    check_tenant_access(admin, tenant_id)
+
     async with async_session_maker() as session:
         # Verify tenant exists
         stmt = select(Tenant).where(Tenant.id == tenant_id)
@@ -416,6 +442,8 @@ async def list_api_keys(
     include_revoked: bool = Query(default=False),
 ) -> list[APIKeyResponse]:
     """List all API keys for a tenant."""
+    check_tenant_access(admin, tenant_id)
+
     async with async_session_maker() as session:
         stmt = select(APIKey).where(APIKey.tenant_id == tenant_id)
 
@@ -466,6 +494,9 @@ async def revoke_api_key(
                 detail="API key not found",
             )
 
+        # Verify admin has access to this key's tenant
+        check_tenant_access(admin, api_key.tenant_id)
+
         if api_key.revoked_at is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -512,6 +543,9 @@ async def rotate_api_key(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="API key not found",
             )
+
+        # Verify admin has access to this key's tenant
+        check_tenant_access(admin, old_key.tenant_id)
 
         if old_key.revoked_at is not None:
             raise HTTPException(
@@ -585,7 +619,19 @@ async def list_audit_logs(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> AuditLogListResponse:
-    """Query audit logs with optional filters."""
+    """Query audit logs with optional filters.
+
+    Non-superadmins can only view their own tenant's logs.
+    """
+    # Non-superadmins can only view their own tenant's logs
+    if not admin.has_scope("superadmin"):
+        if tenant_id is None:
+            # Default to their own tenant
+            tenant_id = admin.tenant_id
+        else:
+            # Verify they're querying their own tenant
+            check_tenant_access(admin, tenant_id)
+
     async with async_session_maker() as session:
         # Build query
         stmt = select(AuditLog)

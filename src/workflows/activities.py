@@ -77,7 +77,7 @@ async def match_template_activity(input: MatchTemplateInput) -> MatchTemplateOut
     This activity wraps the template_matcher service, providing
     database access within the activity context.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from src.db import async_session_maker
     from src.models import Template, TemplateStatus
@@ -87,9 +87,10 @@ async def match_template_activity(input: MatchTemplateInput) -> MatchTemplateOut
     tenant_id = UUID(input.tenant_id)
 
     async with async_session_maker() as db:
-        # Set tenant context for RLS
+        # Set tenant context for RLS using parameterized set_config()
         await db.execute(
-            f"SET LOCAL app.tenant_id = '{tenant_id}'"  # noqa: S608
+            text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
+            {"tenant_id": str(tenant_id)}
         )
 
         # Quick check: exact fingerprint match

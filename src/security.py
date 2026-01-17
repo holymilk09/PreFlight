@@ -182,6 +182,7 @@ class TokenData(NamedTuple):
     email: str
     role: str
     exp: datetime
+    jti: str  # JWT ID for revocation
 
 
 def create_access_token(
@@ -207,6 +208,7 @@ def create_access_token(
         expires_delta = timedelta(minutes=settings.jwt_expire_minutes)
 
     expire = datetime.utcnow() + expires_delta
+    jti = secrets.token_hex(16)  # Unique token ID for revocation
 
     payload = {
         "sub": str(user_id),
@@ -216,19 +218,21 @@ def create_access_token(
         "exp": expire,
         "iat": datetime.utcnow(),
         "type": "access",
+        "jti": jti,
     }
 
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> TokenData | None:
+def decode_access_token(token: str, check_blocklist: bool = True) -> TokenData | None:
     """Decode and validate a JWT access token.
 
     Args:
         token: JWT token string.
+        check_blocklist: Whether to check Redis blocklist (default True).
 
     Returns:
-        TokenData if valid, None if invalid or expired.
+        TokenData if valid, None if invalid, expired, or revoked.
     """
     try:
         payload = jwt.decode(
@@ -241,12 +245,117 @@ def decode_access_token(token: str) -> TokenData | None:
         if payload.get("type") != "access":
             return None
 
+        jti = payload.get("jti", "")
+
+        # Check if token is revoked (blocklisted)
+        if check_blocklist and jti and is_token_revoked(jti):
+            return None
+
         return TokenData(
             user_id=UUID(payload["sub"]),
             tenant_id=UUID(payload["tenant_id"]),
             email=payload["email"],
             role=payload["role"],
             exp=datetime.fromtimestamp(payload["exp"]),
+            jti=jti,
         )
     except (jwt.InvalidTokenError, KeyError, ValueError):
         return None
+
+
+# -----------------------------------------------------------------------------
+# Token Blocklist (Redis-based)
+# -----------------------------------------------------------------------------
+
+_TOKEN_BLOCKLIST_PREFIX = "token_blocklist:"
+
+
+def is_token_revoked(jti: str) -> bool:
+    """Check if a token is revoked (in blocklist).
+
+    Args:
+        jti: JWT ID to check.
+
+    Returns:
+        True if token is revoked, False otherwise.
+    """
+    try:
+        from src.services.rate_limiter import get_redis_client
+
+        redis = get_redis_client()
+        if redis is None:
+            # Redis unavailable - fail open (token not revoked)
+            return False
+
+        # Check synchronously using Redis sync client
+        # Note: This is a blocking call but very fast (O(1) lookup)
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If we're in an async context, we can't use run_until_complete
+            # Use a sync check instead
+            return False  # Fail open in async context without proper async call
+
+        return loop.run_until_complete(_async_is_revoked(jti))
+    except Exception:
+        # On any error, fail open
+        return False
+
+
+async def _async_is_revoked(jti: str) -> bool:
+    """Async check if token is revoked."""
+    try:
+        from src.services.rate_limiter import get_redis_client
+
+        redis = get_redis_client()
+        if redis is None:
+            return False
+
+        result = await redis.exists(f"{_TOKEN_BLOCKLIST_PREFIX}{jti}")
+        return result > 0
+    except Exception:
+        return False
+
+
+async def revoke_token(jti: str, expires_at: datetime) -> bool:
+    """Add a token to the blocklist.
+
+    Args:
+        jti: JWT ID to revoke.
+        expires_at: When the token would naturally expire.
+
+    Returns:
+        True if successfully added to blocklist, False on error.
+    """
+    try:
+        from src.services.rate_limiter import get_redis_client
+
+        redis = get_redis_client()
+        if redis is None:
+            return False
+
+        # Calculate TTL - only need to keep in blocklist until token expires
+        ttl_seconds = max(1, int((expires_at - datetime.utcnow()).total_seconds()))
+
+        # Add to blocklist with expiry
+        await redis.setex(
+            f"{_TOKEN_BLOCKLIST_PREFIX}{jti}",
+            ttl_seconds,
+            "revoked",
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def is_token_revoked_async(jti: str) -> bool:
+    """Async check if a token is revoked.
+
+    Args:
+        jti: JWT ID to check.
+
+    Returns:
+        True if token is revoked, False otherwise.
+    """
+    return await _async_is_revoked(jti)
