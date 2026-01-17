@@ -122,10 +122,13 @@ from sqlmodel import SQLModel
 
 from src.security import generate_api_key
 
-# Test database URL (uses same credentials as main DB but different database name)
+# Test database URL - use DATABASE_URL from CI if available, otherwise use local defaults
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
-    f"postgresql+asyncpg://controlplane:{os.environ.get('POSTGRES_PASSWORD', 'test_postgres_password_12345678901234567890')}@localhost:5432/control_plane_test",
+    os.environ.get(
+        "DATABASE_URL",
+        f"postgresql+asyncpg://controlplane:{os.environ.get('POSTGRES_PASSWORD', 'test_postgres_password_12345678901234567890')}@localhost:5432/control_plane_test",
+    ),
 )
 
 
