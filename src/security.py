@@ -308,12 +308,12 @@ async def _async_is_revoked(jti: str) -> bool:
     try:
         from src.services.rate_limiter import get_redis_client
 
-        redis = get_redis_client()
+        redis = await get_redis_client()
         if redis is None:
             return False
 
         result = await redis.exists(f"{_TOKEN_BLOCKLIST_PREFIX}{jti}")
-        return result > 0
+        return bool(result > 0)
     except Exception:
         return False
 
@@ -331,7 +331,7 @@ async def revoke_token(jti: str, expires_at: datetime) -> bool:
     try:
         from src.services.rate_limiter import get_redis_client
 
-        redis = get_redis_client()
+        redis = await get_redis_client()
         if redis is None:
             return False
 

@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
     # API
     api_host: str = Field(
-        default="0.0.0.0",
+        default="0.0.0.0",  # nosec B104 - intentional for container deployments
         description="API host binding. Use 0.0.0.0 for container deployments, 127.0.0.1 for local-only",
     )
     api_port: int = Field(default=8000, ge=1, le=65535)
