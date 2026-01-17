@@ -495,6 +495,102 @@ async def authenticated_client(
 
 
 @pytest.fixture
+async def admin_client(
+    test_engine,
+    mock_redis,
+    test_tenant: Tenant,
+    test_api_key: tuple[APIKey, str],
+) -> AsyncGenerator[AsyncClient, None]:
+    """Create an authenticated test client with admin scope.
+
+    This client:
+    - Mocks authentication to return the test tenant with admin scope
+    - Mocks Redis for rate limiting
+    - Uses the test database engine for API endpoints
+    """
+    from src import db
+    from src.api.auth import AuthenticatedTenant, validate_api_key
+    from src.api.deps import get_db_session, get_tenant_db
+    from src.api.main import app
+    from src.services import rate_limiter
+
+    api_key_record, plain_key = test_api_key
+
+    # Create mock authenticated tenant with admin scope
+    mock_tenant = AuthenticatedTenant(
+        tenant_id=test_tenant.id,
+        tenant_name=test_tenant.name,
+        api_key_id=api_key_record.id,
+        api_key_name=api_key_record.name,
+        scopes=["*", "admin"],  # Include admin scope
+        rate_limit=api_key_record.rate_limit,
+    )
+
+    # Create a test session maker bound to our test engine
+    test_session_maker = async_sessionmaker(
+        test_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    # Override dependencies
+    async def override_auth():
+        return mock_tenant
+
+    async def override_get_db():
+        async with test_session_maker() as session:
+            yield session
+
+    async def override_get_tenant_db():
+        async with test_session_maker() as session:
+            from sqlalchemy import text
+
+            tenant_id_str = str(test_tenant.id)
+            await session.execute(text(f"SET LOCAL app.tenant_id = '{tenant_id_str}'"))
+            yield session
+
+    app.dependency_overrides[validate_api_key] = override_auth
+    app.dependency_overrides[get_db_session] = override_get_db
+    app.dependency_overrides[get_tenant_db] = override_get_tenant_db
+
+    # Patch the global database session maker (used by some parts of the app)
+    original_session_maker = db.async_session_maker
+    db.async_session_maker = test_session_maker
+
+    # Patch the audit module's reference to async_session_maker
+    from src import audit
+
+    original_audit_session_maker = audit.async_session_maker
+    audit.async_session_maker = test_session_maker
+
+    # Patch the auth module's reference to async_session_maker
+    from src.api import auth
+
+    original_auth_session_maker = auth.async_session_maker
+    auth.async_session_maker = test_session_maker
+
+    # Patch the global Redis client and rate limiter
+    original_redis_client = rate_limiter._redis_client
+    original_rate_limiter = rate_limiter._rate_limiter
+
+    rate_limiter._redis_client = mock_redis
+    rate_limiter._rate_limiter = rate_limiter.RateLimiter(mock_redis)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["X-API-Key"] = plain_key
+        yield client
+
+    # Restore original values
+    db.async_session_maker = original_session_maker
+    audit.async_session_maker = original_audit_session_maker
+    auth.async_session_maker = original_auth_session_maker
+    rate_limiter._redis_client = original_redis_client
+    rate_limiter._rate_limiter = original_rate_limiter
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
 def valid_evaluate_request_data(sample_structural_features: StructuralFeatures) -> dict:
     """Create valid data for evaluate request."""
     import hashlib

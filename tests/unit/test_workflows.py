@@ -1,5 +1,7 @@
 """Unit tests for Temporal workflows."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from uuid_extensions import uuid7
 
@@ -12,12 +14,16 @@ from src.workflows.activities import (
     SelectRulesInput,
     _dict_to_template,
     _template_to_dict,
+    compute_drift_activity,
+    compute_reliability_activity,
+    match_template_activity,
+    select_rules_activity,
 )
 from src.workflows.document_processing import (
     DocumentProcessingInput,
     DocumentProcessingOutput,
 )
-from src.workflows.worker import TASK_QUEUE
+from src.workflows.worker import TASK_QUEUE, create_worker
 
 
 class TestActivityDataClasses:
@@ -279,3 +285,210 @@ class TestWorkflowDefinition:
         from src.workflows.document_processing import DocumentProcessingWorkflow
 
         assert hasattr(DocumentProcessingWorkflow, "run")
+
+
+class TestActivityExecution:
+    """Test actual activity execution with mocked dependencies."""
+
+    @pytest.fixture
+    def template_data(self, sample_structural_features):
+        """Create sample template data dict."""
+        return {
+            "id": str(uuid7()),
+            "tenant_id": str(uuid7()),
+            "template_id": "TEST-TEMPLATE",
+            "version": "1.0",
+            "fingerprint": "a" * 64,
+            "structural_features": sample_structural_features.model_dump(),
+            "baseline_reliability": 0.85,
+            "correction_rules": [{"field": "total", "rule": "sum_line_items"}],
+            "status": "active",
+            "created_at": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_compute_drift_activity(self, template_data, sample_structural_features):
+        """compute_drift_activity should compute drift score."""
+        input_data = ComputeDriftInput(
+            template_data=template_data,
+            current_features=sample_structural_features.model_dump(),
+        )
+
+        with patch("src.services.drift_detector.compute_drift_score", new_callable=AsyncMock) as mock_drift:
+            mock_drift.return_value = 0.15
+            result = await compute_drift_activity(input_data)
+
+        assert result == 0.15
+        mock_drift.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_compute_reliability_activity(self, template_data, sample_extractor_metadata):
+        """compute_reliability_activity should compute reliability score."""
+        input_data = ComputeReliabilityInput(
+            template_data=template_data,
+            extractor=sample_extractor_metadata.model_dump(),
+            drift_score=0.15,
+        )
+
+        with patch(
+            "src.services.reliability_scorer.compute_reliability_score", new_callable=AsyncMock
+        ) as mock_reliability:
+            mock_reliability.return_value = 0.88
+            result = await compute_reliability_activity(input_data)
+
+        assert result == 0.88
+        mock_reliability.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_select_rules_activity(self, template_data):
+        """select_rules_activity should return correction rules as dicts."""
+        input_data = SelectRulesInput(
+            template_data=template_data,
+            reliability_score=0.85,
+        )
+
+        mock_rules = [MagicMock(model_dump=MagicMock(return_value={"field": "total", "rule": "sum"}))]
+
+        with patch(
+            "src.services.correction_rules.select_correction_rules", new_callable=AsyncMock
+        ) as mock_select:
+            mock_select.return_value = mock_rules
+            result = await select_rules_activity(input_data)
+
+        assert len(result) == 1
+        assert result[0]["field"] == "total"
+
+    @pytest.mark.asyncio
+    async def test_select_rules_activity_empty(self, template_data):
+        """select_rules_activity should handle empty rules."""
+        input_data = SelectRulesInput(
+            template_data=template_data,
+            reliability_score=0.95,
+        )
+
+        with patch(
+            "src.services.correction_rules.select_correction_rules", new_callable=AsyncMock
+        ) as mock_select:
+            mock_select.return_value = []
+            result = await select_rules_activity(input_data)
+
+        assert result == []
+
+
+class TestMatchTemplateActivity:
+    """Test match_template_activity with mocked database."""
+
+    @pytest.mark.asyncio
+    async def test_match_template_exact_match(self, sample_structural_features):
+        """Should return exact match with confidence 1.0."""
+        from src.models import Template
+
+        tenant_id = uuid7()
+        template_id = uuid7()
+
+        mock_template = Template(
+            id=template_id,
+            tenant_id=tenant_id,
+            template_id="TEST-TEMPLATE",
+            version="1.0",
+            fingerprint="a" * 64,
+            structural_features=sample_structural_features.model_dump(),
+            baseline_reliability=0.85,
+            status=TemplateStatus.ACTIVE,
+        )
+
+        input_data = MatchTemplateInput(
+            fingerprint="a" * 64,
+            features=sample_structural_features.model_dump(),
+            tenant_id=str(tenant_id),
+        )
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_template
+        mock_session.execute.return_value = mock_result
+
+        with patch("src.db.async_session_maker") as mock_maker:
+            mock_maker.return_value.__aenter__.return_value = mock_session
+            result = await match_template_activity(input_data)
+
+        assert result.matched is True
+        assert result.confidence == 1.0
+        assert result.template_id == str(template_id)
+
+class TestRunWorker:
+    """Test run_worker function."""
+
+    @pytest.mark.asyncio
+    async def test_run_worker_initializes_and_runs(self):
+        """Should initialize db, connect to Temporal, and run worker."""
+        mock_client = MagicMock()
+        mock_worker = MagicMock()
+        mock_worker.run = AsyncMock()
+
+        with (
+            patch("src.db.init_db", new_callable=AsyncMock) as mock_init_db,
+            patch("src.workflows.worker.Client") as mock_client_class,
+            patch("src.workflows.worker.create_worker", new_callable=AsyncMock) as mock_create_worker,
+        ):
+            mock_client_class.connect = AsyncMock(return_value=mock_client)
+            mock_create_worker.return_value = mock_worker
+
+            from src.workflows.worker import run_worker
+
+            await run_worker()
+
+            mock_init_db.assert_called_once()
+            mock_client_class.connect.assert_called_once()
+            mock_create_worker.assert_called_once_with(mock_client)
+            mock_worker.run.assert_called_once()
+
+
+class TestWorkerMain:
+    """Test main entry point."""
+
+    def test_main_calls_asyncio_run(self):
+        """main() should call asyncio.run with run_worker."""
+        with patch("src.workflows.worker.asyncio.run") as mock_asyncio_run:
+            from src.workflows.worker import main
+
+            main()
+
+            mock_asyncio_run.assert_called_once()
+
+
+class TestWorkerCreation:
+    """Test worker creation."""
+
+    @pytest.mark.asyncio
+    async def test_create_worker_with_client(self):
+        """Should create worker with provided client."""
+        mock_client = MagicMock()
+
+        with patch("src.workflows.worker.Worker") as mock_worker_class:
+            mock_worker = MagicMock()
+            mock_worker_class.return_value = mock_worker
+            result = await create_worker(client=mock_client)
+
+        assert result == mock_worker
+        mock_worker_class.assert_called_once()
+        call_args = mock_worker_class.call_args
+        assert call_args[0][0] == mock_client
+        assert call_args[1]["task_queue"] == TASK_QUEUE
+
+    @pytest.mark.asyncio
+    async def test_create_worker_without_client(self):
+        """Should create worker and connect to Temporal."""
+        mock_client = MagicMock()
+
+        with patch("src.workflows.worker.Client") as mock_client_class, patch(
+            "src.workflows.worker.Worker"
+        ) as mock_worker_class:
+            mock_client_class.connect = AsyncMock(return_value=mock_client)
+            mock_worker = MagicMock()
+            mock_worker_class.return_value = mock_worker
+
+            result = await create_worker(client=None)
+
+        assert result == mock_worker
+        mock_client_class.connect.assert_called_once()

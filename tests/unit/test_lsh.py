@@ -1,5 +1,6 @@
 """Unit tests for LSH (Locality-Sensitive Hashing) implementation."""
 
+import pytest
 from uuid_extensions import uuid7
 
 from src.models import StructuralFeatures
@@ -325,6 +326,109 @@ class TestMinHashLSHClass:
 
         lsh = MinHashLSH(num_bands=16)
         assert lsh.num_bands == 16
+
+
+class TestMinHashLSHWithMockedRedis:
+    """Test MinHashLSH with mocked Redis."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_success(self):
+        """Should initialize successfully with Redis."""
+        from unittest.mock import AsyncMock, patch
+        from src.services.lsh_index import MinHashLSH
+
+        lsh = MinHashLSH()
+        mock_redis = AsyncMock()
+
+        with patch("src.services.rate_limiter.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+            result = await lsh.initialize()
+
+        assert result is True
+        assert lsh.available is True
+        mock_redis.ping.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_initialize_failure(self):
+        """Should handle Redis connection failure gracefully."""
+        from unittest.mock import AsyncMock, patch
+        from src.services.lsh_index import MinHashLSH
+
+        lsh = MinHashLSH()
+
+        with patch("src.services.rate_limiter.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Connection failed")):
+            result = await lsh.initialize()
+
+        assert result is False
+        assert lsh.available is False
+
+    @pytest.mark.asyncio
+    async def test_add_template_when_unavailable(self, sample_structural_features):
+        """Should return False when LSH is unavailable."""
+        from src.services.lsh_index import MinHashLSH
+
+        lsh = MinHashLSH()
+        lsh._available = False
+
+        result = await lsh.add_template(uuid7(), uuid7(), sample_structural_features)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_query_when_unavailable(self, sample_structural_features):
+        """Should return empty list when LSH is unavailable."""
+        from src.services.lsh_index import MinHashLSH
+
+        lsh = MinHashLSH()
+        lsh._available = False
+
+        candidates = await lsh.query(sample_structural_features, k=5)
+
+        assert candidates == []
+
+    @pytest.mark.asyncio
+    async def test_remove_template_when_unavailable(self):
+        """Should return False when LSH is unavailable."""
+        from src.services.lsh_index import MinHashLSH
+
+        lsh = MinHashLSH()
+        lsh._available = False
+
+        result = await lsh.remove_template(uuid7())
+        assert result is False
+
+
+class TestGetLshIndex:
+    """Tests for get_lsh_index singleton function."""
+
+    @pytest.mark.asyncio
+    async def test_get_lsh_index_creates_instance(self):
+        """Should create and initialize LSH index on first call."""
+        from unittest.mock import AsyncMock, patch
+        import src.services.lsh_index as lsh_module
+
+        # Reset global state
+        lsh_module._lsh_index = None
+
+        mock_lsh = AsyncMock()
+        mock_lsh.initialize = AsyncMock(return_value=True)
+
+        with patch.object(lsh_module, "MinHashLSH", return_value=mock_lsh):
+            result = await lsh_module.get_lsh_index()
+
+        assert result == mock_lsh
+        mock_lsh.initialize.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_lsh_index_returns_existing(self):
+        """Should return existing instance on subsequent calls."""
+        from unittest.mock import AsyncMock
+        import src.services.lsh_index as lsh_module
+
+        mock_lsh = AsyncMock()
+        lsh_module._lsh_index = mock_lsh
+
+        result = await lsh_module.get_lsh_index()
+
+        assert result == mock_lsh
 
 
 class TestTemplateMatcher:
