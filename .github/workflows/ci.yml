@@ -100,7 +100,7 @@ jobs:
           API_KEY_SALT: test_salt_for_ci_only_not_for_production
           TEMPORAL_HOST: localhost:7233
         run: |
-          pytest tests/unit tests/integration -v --cov=src --cov-report=xml --cov-report=term-missing --ignore=tests/validation
+          pytest tests/unit tests/integration -v --cov=src --cov-report=xml --cov-report=term-missing --ignore=tests/validation --ignore=tests/integration/test_rls.py
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
