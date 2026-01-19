@@ -3,7 +3,12 @@
 Deterministic rule selection based on template and reliability.
 """
 
+import structlog
+from pydantic import ValidationError
+
 from src.models import CorrectionRule, Template
+
+logger = structlog.get_logger()
 
 # Standard correction rules available in the system
 STANDARD_RULES = {
@@ -66,8 +71,17 @@ async def select_correction_rules(
     rules: list[CorrectionRule] = []
 
     # 1. Add template-defined rules first
-    for rule_dict in template.correction_rules:
-        rules.append(CorrectionRule.model_validate(rule_dict))
+    for i, rule_dict in enumerate(template.correction_rules):
+        try:
+            rules.append(CorrectionRule.model_validate(rule_dict))
+        except ValidationError as e:
+            logger.warning(
+                "invalid_correction_rule_in_template",
+                template_id=str(template.id),
+                rule_index=i,
+                error=str(e),
+            )
+            # Skip invalid rules, continue with others
 
     # 2. Add reliability-based rules
     if reliability_score < 0.95:

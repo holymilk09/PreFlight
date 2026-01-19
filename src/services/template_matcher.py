@@ -9,6 +9,7 @@ import math
 from uuid import UUID
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -162,7 +163,16 @@ async def _match_with_lsh(
             if not template:
                 continue
 
-            template_features = StructuralFeatures.model_validate(template.structural_features)
+            try:
+                template_features = StructuralFeatures.model_validate(template.structural_features)
+            except ValidationError as e:
+                logger.warning(
+                    "invalid_template_features",
+                    template_id=str(template.id),
+                    error=str(e),
+                )
+                continue
+
             template_vector = _extract_feature_vector(template_features)
             similarity = _cosine_similarity(input_vector, template_vector)
 
@@ -211,7 +221,16 @@ async def _match_with_scan(
 
     for template in templates:
         # Extract template's feature vector
-        template_features = StructuralFeatures.model_validate(template.structural_features)
+        try:
+            template_features = StructuralFeatures.model_validate(template.structural_features)
+        except ValidationError as e:
+            logger.warning(
+                "invalid_template_features_in_scan",
+                template_id=str(template.id),
+                error=str(e),
+            )
+            continue
+
         template_vector = _extract_feature_vector(template_features)
 
         # Compute similarity

@@ -1,11 +1,15 @@
 """API routes for the Control Plane."""
 
 import hashlib
+import json
 import time
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, HTTPException, Request, status
+from redis.exceptions import RedisError
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from uuid_extensions import uuid7
 
 from src.api.auth import CurrentTenant
@@ -33,11 +37,86 @@ from src.models import (
 )
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
+from src.services.rate_limiter import get_redis_client
 from src.services.reliability_scorer import compute_reliability_score
 from src.services.safeguard_engine import safeguard_engine
 from src.services.template_matcher import match_template
 
+logger = structlog.get_logger()
+
+# Provider cache TTL (5 minutes)
+PROVIDER_CACHE_TTL_SECONDS = 300
+
 router = APIRouter()
+
+
+async def get_cached_provider(
+    vendor: str,
+    db: AsyncSession,
+) -> ExtractorProvider | None:
+    """Get ExtractorProvider with Redis caching.
+
+    Cache key: provider:{vendor_lower}
+    TTL: 5 minutes
+
+    Falls back to database query on cache miss or Redis error.
+    """
+    vendor_lower = vendor.lower()
+    cache_key = f"provider:{vendor_lower}"
+
+    # Try cache first
+    try:
+        redis = await get_redis_client()
+        cached = await redis.get(cache_key)
+        # Check for valid cached data (must be str or bytes, not None or mock objects)
+        if cached and isinstance(cached, (str, bytes)):
+            data = json.loads(cached)
+            logger.debug("provider_cache_hit", vendor=vendor_lower)
+            return ExtractorProvider(
+                id=UUID(data["id"]),
+                vendor=data["vendor"],
+                display_name=data["display_name"],
+                confidence_multiplier=data["confidence_multiplier"],
+                drift_sensitivity=data["drift_sensitivity"],
+                supported_element_types=data["supported_element_types"],
+                typical_latency_ms=data["typical_latency_ms"],
+                is_active=data["is_active"],
+                is_known=data["is_known"],
+            )
+    except (RedisError, ConnectionError, json.JSONDecodeError, TypeError, RuntimeError, OSError) as e:
+        # Fall through to database query on any Redis error
+        logger.debug("provider_cache_skip", error=str(e), vendor=vendor_lower)
+
+    # Cache miss or error - query database
+    stmt = select(ExtractorProvider).where(
+        func.lower(ExtractorProvider.vendor) == vendor_lower,
+        ExtractorProvider.is_active == True,  # noqa: E712
+    )
+    result = await db.execute(stmt)
+    provider = result.scalar_one_or_none()
+
+    # Populate cache if provider found
+    if provider:
+        try:
+            redis = await get_redis_client()
+            cache_data = json.dumps({
+                "id": str(provider.id),
+                "vendor": provider.vendor,
+                "display_name": provider.display_name,
+                "confidence_multiplier": provider.confidence_multiplier,
+                "drift_sensitivity": provider.drift_sensitivity,
+                "supported_element_types": provider.supported_element_types,
+                "typical_latency_ms": provider.typical_latency_ms,
+                "is_active": provider.is_active,
+                "is_known": provider.is_known,
+            })
+            await redis.setex(cache_key, PROVIDER_CACHE_TTL_SECONDS, cache_data)
+            logger.debug("provider_cache_set", vendor=vendor_lower)
+        except (RedisError, ConnectionError, RuntimeError, OSError) as e:
+            # Cache set failures are non-critical
+            logger.debug("provider_cache_set_skip", error=str(e), vendor=vendor_lower)
+
+    return provider
 
 
 # -----------------------------------------------------------------------------
@@ -72,14 +151,8 @@ async def evaluate(
     start_time = time.perf_counter()
     alerts: list[str] = []
 
-    # Look up provider configuration (case-insensitive)
-    vendor_lower = body.extractor_metadata.vendor.lower()
-    provider_stmt = select(ExtractorProvider).where(
-        func.lower(ExtractorProvider.vendor) == vendor_lower,
-        ExtractorProvider.is_active == True,  # noqa: E712
-    )
-    provider_result = await db.execute(provider_stmt)
-    provider = provider_result.scalar_one_or_none()
+    # Look up provider configuration (cached)
+    provider = await get_cached_provider(body.extractor_metadata.vendor, db)
 
     # Run safeguard validation
     validation_warnings = safeguard_engine.validate_request(
@@ -282,17 +355,22 @@ async def list_evaluations(
     result = await db.execute(stmt)
     evaluations = result.scalars().all()
 
+    # Batch fetch all templates to avoid N+1 query
+    template_ids = [e.template_id for e in evaluations if e.template_id]
+    templates_by_id = {}
+    if template_ids:
+        template_stmt = select(Template).where(Template.id.in_(template_ids))
+        template_result = await db.execute(template_stmt)
+        templates_by_id = {t.id: t for t in template_result.scalars().all()}
+
     # Build response with template version info
     evaluation_records = []
     for e in evaluations:
         # Get template version if template exists
         template_version_id = None
-        if e.template_id:
-            template_stmt = select(Template).where(Template.id == e.template_id)
-            template_result = await db.execute(template_stmt)
-            template = template_result.scalar_one_or_none()
-            if template:
-                template_version_id = f"{template.template_id}:{template.version}"
+        if e.template_id and e.template_id in templates_by_id:
+            template = templates_by_id[e.template_id]
+            template_version_id = f"{template.template_id}:{template.version}"
 
         evaluation_records.append(
             EvaluationRecord(

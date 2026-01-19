@@ -8,13 +8,18 @@ a Temporal workflow.
 from dataclasses import dataclass
 from uuid import UUID
 
+import structlog
+from pydantic import ValidationError
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from src.models import (
     ExtractorMetadata,
     StructuralFeatures,
     Template,
 )
+
+logger = structlog.get_logger()
 
 # -----------------------------------------------------------------------------
 # Activity Input/Output Data Classes
@@ -83,7 +88,14 @@ async def match_template_activity(input: MatchTemplateInput) -> MatchTemplateOut
     from src.models import Template, TemplateStatus
     from src.services.template_matcher import _cosine_similarity, _extract_feature_vector
 
-    features = StructuralFeatures.model_validate(input.features)
+    try:
+        features = StructuralFeatures.model_validate(input.features)
+    except ValidationError as e:
+        logger.error("invalid_features_in_match_activity", error=str(e))
+        raise ApplicationError(
+            f"Invalid structural features: {e}",
+            non_retryable=True,
+        ) from e
     tenant_id = UUID(input.tenant_id)
 
     async with async_session_maker() as db:
@@ -130,7 +142,15 @@ async def match_template_activity(input: MatchTemplateInput) -> MatchTemplateOut
         best_similarity = 0.0
 
         for template in templates:
-            template_features = StructuralFeatures.model_validate(template.structural_features)
+            try:
+                template_features = StructuralFeatures.model_validate(template.structural_features)
+            except ValidationError as e:
+                logger.warning(
+                    "invalid_template_features_in_match_activity",
+                    template_id=str(template.id),
+                    error=str(e),
+                )
+                continue  # Skip invalid templates
             template_vector = _extract_feature_vector(template_features)
             similarity = _cosine_similarity(input_vector, template_vector)
 
@@ -164,7 +184,14 @@ async def compute_drift_activity(input: ComputeDriftInput) -> float:
     from src.services.drift_detector import compute_drift_score
 
     template = _dict_to_template(input.template_data)
-    features = StructuralFeatures.model_validate(input.current_features)
+    try:
+        features = StructuralFeatures.model_validate(input.current_features)
+    except ValidationError as e:
+        logger.error("invalid_features_in_drift_activity", error=str(e))
+        raise ApplicationError(
+            f"Invalid structural features: {e}",
+            non_retryable=True,
+        ) from e
 
     return await compute_drift_score(template, features)
 
@@ -178,7 +205,14 @@ async def compute_reliability_activity(input: ComputeReliabilityInput) -> float:
     from src.services.reliability_scorer import compute_reliability_score
 
     template = _dict_to_template(input.template_data)
-    extractor = ExtractorMetadata.model_validate(input.extractor)
+    try:
+        extractor = ExtractorMetadata.model_validate(input.extractor)
+    except ValidationError as e:
+        logger.error("invalid_extractor_metadata_in_reliability_activity", error=str(e))
+        raise ApplicationError(
+            f"Invalid extractor metadata: {e}",
+            non_retryable=True,
+        ) from e
 
     return await compute_reliability_score(template, extractor, input.drift_score)
 

@@ -4,7 +4,12 @@ MVP implementation: Z-score from baseline.
 Future: CUSUM charts, Prophet forecasting, PELT changepoint detection.
 """
 
+import structlog
+from pydantic import ValidationError
+
 from src.models import StructuralFeatures, Template
+
+logger = structlog.get_logger()
 
 
 async def compute_drift_score(
@@ -32,7 +37,16 @@ async def compute_drift_score(
         - > 0.50: Critical drift (red)
     """
     # Get baseline features from template
-    baseline = StructuralFeatures.model_validate(template.structural_features)
+    try:
+        baseline = StructuralFeatures.model_validate(template.structural_features)
+    except ValidationError as e:
+        logger.warning(
+            "invalid_template_baseline_features",
+            template_id=str(template.id),
+            error=str(e),
+        )
+        # Cannot compute drift without valid baseline - return max drift
+        return 1.0
 
     # Compute individual metric drifts
     drifts = []
@@ -103,7 +117,15 @@ def get_drift_details(
 
     Returns a dictionary with per-metric drift values.
     """
-    baseline = StructuralFeatures.model_validate(template.structural_features)
+    try:
+        baseline = StructuralFeatures.model_validate(template.structural_features)
+    except ValidationError as e:
+        logger.warning(
+            "invalid_template_features_for_drift_details",
+            template_id=str(template.id),
+            error=str(e),
+        )
+        return {"error": "Invalid template baseline features"}
 
     return {
         "element_count": {
