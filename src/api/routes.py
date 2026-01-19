@@ -83,7 +83,14 @@ async def get_cached_provider(
                 is_active=data["is_active"],
                 is_known=data["is_known"],
             )
-    except (RedisError, ConnectionError, json.JSONDecodeError, TypeError, RuntimeError, OSError) as e:
+    except (
+        RedisError,
+        ConnectionError,
+        json.JSONDecodeError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as e:
         # Fall through to database query on any Redis error
         logger.debug("provider_cache_skip", error=str(e), vendor=vendor_lower)
 
@@ -99,17 +106,19 @@ async def get_cached_provider(
     if provider:
         try:
             redis = await get_redis_client()
-            cache_data = json.dumps({
-                "id": str(provider.id),
-                "vendor": provider.vendor,
-                "display_name": provider.display_name,
-                "confidence_multiplier": provider.confidence_multiplier,
-                "drift_sensitivity": provider.drift_sensitivity,
-                "supported_element_types": provider.supported_element_types,
-                "typical_latency_ms": provider.typical_latency_ms,
-                "is_active": provider.is_active,
-                "is_known": provider.is_known,
-            })
+            cache_data = json.dumps(
+                {
+                    "id": str(provider.id),
+                    "vendor": provider.vendor,
+                    "display_name": provider.display_name,
+                    "confidence_multiplier": provider.confidence_multiplier,
+                    "drift_sensitivity": provider.drift_sensitivity,
+                    "supported_element_types": provider.supported_element_types,
+                    "typical_latency_ms": provider.typical_latency_ms,
+                    "is_active": provider.is_active,
+                    "is_known": provider.is_known,
+                }
+            )
             await redis.setex(cache_key, PROVIDER_CACHE_TTL_SECONDS, cache_data)
             logger.debug("provider_cache_set", vendor=vendor_lower)
         except (RedisError, ConnectionError, RuntimeError, OSError) as e:
