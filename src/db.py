@@ -14,8 +14,8 @@ from src.config import settings
 engine = create_async_engine(
     settings.database_url,
     poolclass=AsyncAdaptedQueuePool,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=25,
+    max_overflow=25,
     pool_pre_ping=True,
     echo=settings.log_level == "DEBUG",
 )

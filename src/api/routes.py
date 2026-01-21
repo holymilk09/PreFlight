@@ -6,7 +6,7 @@ import time
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,14 @@ from uuid_extensions import uuid7
 
 from src.api.auth import CurrentTenant
 from src.api.deps import TenantDbSession
+from src.api.errors import (
+    EVALUATION_NOT_FOUND,
+    NO_FIELDS_TO_UPDATE,
+    TEMPLATE_NOT_FOUND,
+    ErrorCode,
+    bad_request,
+    conflict,
+)
 from src.audit import log_audit_event, log_evaluation_requested, log_template_created
 from src.metrics import record_evaluation
 from src.models import (
@@ -433,10 +441,7 @@ async def get_evaluation(
     evaluation = result.scalar_one_or_none()
 
     if not evaluation:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Evaluation not found",
-        )
+        raise EVALUATION_NOT_FOUND
 
     # Get template version if template exists
     template_version_id = None
@@ -546,9 +551,11 @@ async def create_template(
     existing = result.scalar_one_or_none()
 
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Template {body.template_id} version {body.version} already exists",
+        raise conflict(
+            ErrorCode.TEMPLATE_ALREADY_EXISTS,
+            f"Template {body.template_id} version {body.version} already exists",
+            template_id=body.template_id,
+            version=body.version,
         )
 
     # Create template
@@ -612,10 +619,7 @@ async def get_template(
     template = result.scalar_one_or_none()
 
     if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Template not found",
-        )
+        raise TEMPLATE_NOT_FOUND
 
     return TemplateResponse(
         id=template.id,
@@ -652,10 +656,7 @@ async def update_template(
     template = result.scalar_one_or_none()
 
     if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Template not found",
-        )
+        raise TEMPLATE_NOT_FOUND
 
     # Track what fields were updated
     updated_fields: dict[str, object] = {}
@@ -672,10 +673,7 @@ async def update_template(
         template.correction_rules = [r.model_dump() for r in body.correction_rules]
 
     if not updated_fields:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No fields to update",
-        )
+        raise NO_FIELDS_TO_UPDATE
 
     db.add(template)
     await db.commit()
@@ -734,15 +732,12 @@ async def delete_template(
     template = result.scalar_one_or_none()
 
     if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Template not found",
-        )
+        raise TEMPLATE_NOT_FOUND
 
     if template.status == TemplateStatus.DEPRECATED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Template is already deprecated",
+        raise bad_request(
+            ErrorCode.TEMPLATE_ALREADY_DEPRECATED,
+            "Template is already deprecated",
         )
 
     old_status = template.status
@@ -794,15 +789,13 @@ async def update_template_status(
     template = result.scalar_one_or_none()
 
     if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Template not found",
-        )
+        raise TEMPLATE_NOT_FOUND
 
     if template.status == body.status:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Template is already in {body.status.value} status",
+        raise bad_request(
+            ErrorCode.INVALID_REQUEST,
+            f"Template is already in {body.status.value} status",
+            current_status=body.status.value,
         )
 
     old_status = template.status

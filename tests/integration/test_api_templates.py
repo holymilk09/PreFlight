@@ -60,7 +60,7 @@ class TestCreateTemplate:
         )
 
         assert response2.status_code == 409
-        assert "already exists" in response2.json()["detail"]
+        assert "already exists" in response2.json()["detail"]["message"]
 
     @pytest.mark.asyncio
     async def test_create_template_different_version_allowed(
@@ -231,7 +231,7 @@ class TestGetTemplate:
         response = await authenticated_client.get(f"/v1/templates/{uuid7()}")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        assert "not found" in response.json()["detail"]["message"].lower()
 
     @pytest.mark.asyncio
     async def test_get_template_success(
