@@ -22,11 +22,11 @@ from src.api.errors import (
     bad_request,
     conflict,
 )
+from src.api.mappers import create_evaluation, evaluation_to_record, template_to_response
 from src.audit import log_audit_event, log_evaluation_requested, log_template_created
 from src.metrics import record_evaluation
 from src.models import (
     AuditAction,
-    CorrectionRule,
     Decision,
     DetailedHealthResponse,
     EvaluateRequest,
@@ -136,6 +136,29 @@ async def get_cached_provider(
     return provider
 
 
+async def get_template_or_404(template_id: UUID, db: AsyncSession) -> Template:
+    """Fetch template by ID or raise TEMPLATE_NOT_FOUND.
+
+    Args:
+        template_id: The UUID of the template to fetch.
+        db: Database session with RLS context set.
+
+    Returns:
+        The Template if found.
+
+    Raises:
+        HTTPException: TEMPLATE_NOT_FOUND if template doesn't exist.
+    """
+    stmt = select(Template).where(Template.id == template_id)
+    result = await db.execute(stmt)
+    template = result.scalar_one_or_none()
+
+    if not template:
+        raise TEMPLATE_NOT_FOUND
+
+    return template
+
+
 # -----------------------------------------------------------------------------
 # Evaluation Endpoint (Core)
 # -----------------------------------------------------------------------------
@@ -199,25 +222,9 @@ async def evaluate(
         )
         correction_rules = []
         template_version_id = None
-    elif match_confidence < 0.85:
-        decision = Decision.REVIEW
-        drift_score = await compute_drift_score(
-            template=matched_template,
-            current_features=body.structural_features,
-        )
-        reliability_score = await compute_reliability_score(
-            template=matched_template,
-            extractor=body.extractor_metadata,
-            drift_score=drift_score,
-            provider=provider,
-        )
-        correction_rules = await select_correction_rules(
-            template=matched_template,
-            reliability_score=reliability_score,
-        )
-        template_version_id = f"{matched_template.template_id}:{matched_template.version}"
     else:
-        decision = Decision.MATCH
+        # REVIEW (0.50-0.85) or MATCH (>=0.85) - same computation, different decision
+        decision = Decision.REVIEW if match_confidence < 0.85 else Decision.MATCH
         drift_score = await compute_drift_score(
             template=matched_template,
             current_features=body.structural_features,
@@ -244,8 +251,8 @@ async def evaluate(
     processing_time_ms = int((time.perf_counter() - start_time) * 1000)
 
     # Store evaluation record with enhanced extractor tracking
-    evaluation = Evaluation(
-        id=evaluation_id,
+    evaluation = create_evaluation(
+        evaluation_id=evaluation_id,
         tenant_id=tenant.tenant_id,
         correlation_id=body.client_correlation_id,
         document_hash=body.client_doc_hash,
@@ -254,15 +261,9 @@ async def evaluate(
         match_confidence=match_confidence if matched_template else None,
         drift_score=drift_score,
         reliability_score=reliability_score,
-        correction_rules=[r.model_dump() for r in correction_rules],
-        # Enhanced extractor tracking
-        extractor_vendor=body.extractor_metadata.vendor,
-        extractor_model=body.extractor_metadata.model,
-        extractor_version=body.extractor_metadata.version,
-        extractor_confidence=body.extractor_metadata.confidence,
-        extractor_latency_ms=body.extractor_metadata.latency_ms,
-        extractor_cost_usd=body.extractor_metadata.cost_usd,
-        provider_id=provider.id if provider else None,
+        correction_rules=correction_rules,
+        extractor=body.extractor_metadata,
+        provider=provider,
         validation_warnings=validation_warnings,
         processing_time_ms=processing_time_ms,
     )
@@ -389,28 +390,7 @@ async def list_evaluations(
             template = templates_by_id[e.template_id]
             template_version_id = f"{template.template_id}:{template.version}"
 
-        evaluation_records.append(
-            EvaluationRecord(
-                id=e.id,
-                correlation_id=e.correlation_id,
-                document_hash=e.document_hash,
-                template_id=e.template_id,
-                template_version_id=template_version_id,
-                decision=e.decision,
-                match_confidence=e.match_confidence,
-                drift_score=e.drift_score,
-                reliability_score=e.reliability_score,
-                correction_rules=[CorrectionRule(**r) for r in (e.correction_rules or [])],
-                extractor_vendor=e.extractor_vendor,
-                extractor_model=e.extractor_model,
-                extractor_version=e.extractor_version,
-                extractor_confidence=e.extractor_confidence,
-                extractor_latency_ms=e.extractor_latency_ms,
-                validation_warnings=e.validation_warnings or [],
-                processing_time_ms=e.processing_time_ms,
-                created_at=e.created_at,
-            )
-        )
+        evaluation_records.append(evaluation_to_record(e, template_version_id))
 
     return EvaluationListResponse(
         evaluations=evaluation_records,
@@ -452,26 +432,7 @@ async def get_evaluation(
         if template:
             template_version_id = f"{template.template_id}:{template.version}"
 
-    return EvaluationRecord(
-        id=evaluation.id,
-        correlation_id=evaluation.correlation_id,
-        document_hash=evaluation.document_hash,
-        template_id=evaluation.template_id,
-        template_version_id=template_version_id,
-        decision=evaluation.decision,
-        match_confidence=evaluation.match_confidence,
-        drift_score=evaluation.drift_score,
-        reliability_score=evaluation.reliability_score,
-        correction_rules=[CorrectionRule(**r) for r in (evaluation.correction_rules or [])],
-        extractor_vendor=evaluation.extractor_vendor,
-        extractor_model=evaluation.extractor_model,
-        extractor_version=evaluation.extractor_version,
-        extractor_confidence=evaluation.extractor_confidence,
-        extractor_latency_ms=evaluation.extractor_latency_ms,
-        validation_warnings=evaluation.validation_warnings or [],
-        processing_time_ms=evaluation.processing_time_ms,
-        created_at=evaluation.created_at,
-    )
+    return evaluation_to_record(evaluation, template_version_id)
 
 
 # -----------------------------------------------------------------------------
@@ -506,19 +467,7 @@ async def list_templates(
     result = await db.execute(stmt)
     templates = result.scalars().all()
 
-    return [
-        TemplateResponse(
-            id=t.id,
-            template_id=t.template_id,
-            version=t.version,
-            fingerprint=t.fingerprint,
-            baseline_reliability=t.baseline_reliability,
-            status=t.status,
-            created_at=t.created_at,
-            correction_rules=[],  # Simplified for list view
-        )
-        for t in templates
-    ]
+    return [template_to_response(t, include_rules=False) for t in templates]
 
 
 @router.post(
@@ -614,23 +563,9 @@ async def get_template(
 
     RLS ensures the template belongs to the authenticated tenant.
     """
-    stmt = select(Template).where(Template.id == template_id)
-    result = await db.execute(stmt)
-    template = result.scalar_one_or_none()
+    template = await get_template_or_404(template_id, db)
 
-    if not template:
-        raise TEMPLATE_NOT_FOUND
-
-    return TemplateResponse(
-        id=template.id,
-        template_id=template.template_id,
-        version=template.version,
-        fingerprint=template.fingerprint,
-        baseline_reliability=template.baseline_reliability,
-        status=template.status,
-        created_at=template.created_at,
-        correction_rules=[],  # Could parse from template.correction_rules
-    )
+    return template_to_response(template, include_rules=False)
 
 
 @router.put(
@@ -651,12 +586,7 @@ async def update_template(
     Only baseline_reliability and correction_rules can be updated.
     RLS ensures the template belongs to the authenticated tenant.
     """
-    stmt = select(Template).where(Template.id == template_id)
-    result = await db.execute(stmt)
-    template = result.scalar_one_or_none()
-
-    if not template:
-        raise TEMPLATE_NOT_FOUND
+    template = await get_template_or_404(template_id, db)
 
     # Track what fields were updated
     updated_fields: dict[str, object] = {}
@@ -694,19 +624,7 @@ async def update_template(
         request_id=UUID(request.state.request_id) if hasattr(request.state, "request_id") else None,
     )
 
-    # Parse correction rules from stored JSON
-    correction_rules = [CorrectionRule(**r) for r in (template.correction_rules or [])]
-
-    return TemplateResponse(
-        id=template.id,
-        template_id=template.template_id,
-        version=template.version,
-        fingerprint=template.fingerprint,
-        baseline_reliability=template.baseline_reliability,
-        status=template.status,
-        created_at=template.created_at,
-        correction_rules=correction_rules,
-    )
+    return template_to_response(template, include_rules=True)
 
 
 @router.delete(
@@ -727,12 +645,7 @@ async def delete_template(
     Deprecated templates are not used for matching new documents.
     RLS ensures the template belongs to the authenticated tenant.
     """
-    stmt = select(Template).where(Template.id == template_id)
-    result = await db.execute(stmt)
-    template = result.scalar_one_or_none()
-
-    if not template:
-        raise TEMPLATE_NOT_FOUND
+    template = await get_template_or_404(template_id, db)
 
     if template.status == TemplateStatus.DEPRECATED:
         raise bad_request(
@@ -784,12 +697,7 @@ async def update_template_status(
 
     RLS ensures the template belongs to the authenticated tenant.
     """
-    stmt = select(Template).where(Template.id == template_id)
-    result = await db.execute(stmt)
-    template = result.scalar_one_or_none()
-
-    if not template:
-        raise TEMPLATE_NOT_FOUND
+    template = await get_template_or_404(template_id, db)
 
     if template.status == body.status:
         raise bad_request(
@@ -820,19 +728,7 @@ async def update_template_status(
         request_id=UUID(request.state.request_id) if hasattr(request.state, "request_id") else None,
     )
 
-    # Parse correction rules from stored JSON
-    correction_rules = [CorrectionRule(**r) for r in (template.correction_rules or [])]
-
-    return TemplateResponse(
-        id=template.id,
-        template_id=template.template_id,
-        version=template.version,
-        fingerprint=template.fingerprint,
-        baseline_reliability=template.baseline_reliability,
-        status=template.status,
-        created_at=template.created_at,
-        correction_rules=correction_rules,
-    )
+    return template_to_response(template, include_rules=True)
 
 
 # -----------------------------------------------------------------------------
