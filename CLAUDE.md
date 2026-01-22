@@ -44,7 +44,8 @@ control-plane/
 │   │   ├── main.py         # FastAPI app + security middleware
 │   │   ├── routes.py       # All MVP endpoints
 │   │   ├── auth.py         # API key authentication
-│   │   └── deps.py         # Dependencies (DB, tenant context)
+│   │   ├── deps.py         # Dependencies (DB, tenant context)
+│   │   └── mappers.py      # Response mappers and factories
 │   └── services/
 │       ├── __init__.py
 │       ├── template_matcher.py    # Cosine similarity matching
