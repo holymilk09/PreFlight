@@ -57,9 +57,12 @@ async def get_tenant_session(tenant_id: UUID) -> AsyncGenerator[AsyncSession, No
     """
     async with async_session_maker() as session:
         try:
-            # Set tenant context for RLS policies
+            # Set tenant context for RLS policies. Use set_config(...) rather than
+            # "SET LOCAL app.tenant_id = :param": PostgreSQL's SET command does not
+            # accept bind parameters, so the parameterized form fails at runtime.
+            # This mirrors get_tenant_db() in src/api/deps.py.
             await session.execute(
-                text("SET LOCAL app.tenant_id = :tenant_id"),
+                text("SELECT set_config('app.tenant_id', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
             yield session

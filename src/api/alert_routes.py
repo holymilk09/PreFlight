@@ -1,6 +1,9 @@
 """Alerting CRUD and delivery routes (alert rules, webhooks, alert events)."""
 
+import ipaddress
 import secrets
+import socket
+from urllib.parse import urlparse
 from uuid import UUID
 
 import structlog
@@ -59,6 +62,65 @@ def _request_id(request: Request) -> UUID | None:
 
 def _client_ip(request: Request) -> str | None:
     return request.client.host if request.client else None
+
+
+def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Reject IPs that could be used for SSRF (loopback, private, link-local,
+    reserved, multicast, unspecified). Link-local covers the cloud metadata
+    endpoint (169.254.169.254)."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Validate an outbound webhook URL, rejecting SSRF-prone targets.
+
+    Enforces an http(s) scheme and blocks internal/reserved address space. When
+    the host is a DNS name we resolve it best-effort and block if any resolved
+    address is internal; resolution failures do not block creation (the host may
+    be resolvable only from the delivery network). DNS-rebinding is a residual
+    risk left for a future hardening pass.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise bad_request(ErrorCode.INVALID_REQUEST, "Webhook url must be an http(s) URL", url=url)
+    host = parsed.hostname
+    if not host:
+        raise bad_request(ErrorCode.INVALID_REQUEST, "Webhook url must include a host", url=url)
+    if host.lower() == "localhost" or host.lower().endswith(".localhost"):
+        raise bad_request(ErrorCode.INVALID_REQUEST, "Webhook url host is not allowed", url=url)
+
+    # Direct IP literal.
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if ip is not None:
+        if _is_blocked_ip(ip):
+            raise bad_request(ErrorCode.INVALID_REQUEST, "Webhook url host is not allowed", url=url)
+        return
+
+    # DNS name: best-effort resolution; block if any resolved address is internal.
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return
+    for info in infos:
+        addr = info[4][0]
+        try:
+            resolved = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if _is_blocked_ip(resolved):
+            raise bad_request(
+                ErrorCode.INVALID_REQUEST, "Webhook url resolves to a blocked address", url=url
+            )
 
 
 # -----------------------------------------------------------------------------
@@ -204,12 +266,7 @@ async def create_webhook(
     db: TenantDbSession,
 ) -> WebhookCreatedResponse:
     """Create a webhook endpoint. The signing secret is returned only once."""
-    if not (body.url.startswith("http://") or body.url.startswith("https://")):
-        raise bad_request(
-            ErrorCode.INVALID_REQUEST,
-            "Webhook url must be an http(s) URL",
-            url=body.url,
-        )
+    _validate_webhook_url(body.url)
 
     endpoint = WebhookEndpoint(
         tenant_id=tenant.tenant_id,

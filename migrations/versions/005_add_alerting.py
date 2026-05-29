@@ -36,9 +36,9 @@ def upgrade() -> None:
         ),
         sa.Column("name", sa.String(120), nullable=False),
         sa.Column("metric", sa.String(40), nullable=False),
-        sa.Column("comparator", sa.String(4), nullable=False, server_default="gt"),
+        sa.Column("comparator", sa.String(4), nullable=False, server_default=sa.text("'gt'")),
         sa.Column("threshold", sa.Float, nullable=True),
-        sa.Column("severity", sa.String(20), nullable=False, server_default="warning"),
+        sa.Column("severity", sa.String(20), nullable=False, server_default=sa.text("'warning'")),
         sa.Column("enabled", sa.Boolean, nullable=False, server_default=sa.true()),
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime, nullable=False, server_default=sa.func.now()),
@@ -92,7 +92,9 @@ def upgrade() -> None:
         sa.Column("threshold", sa.Float, nullable=True),
         sa.Column("severity", sa.String(20), nullable=False),
         sa.Column("message", sa.String(500), nullable=False),
-        sa.Column("delivery_status", sa.String(20), nullable=False, server_default="pending"),
+        sa.Column(
+            "delivery_status", sa.String(20), nullable=False, server_default=sa.text("'pending'")
+        ),
         sa.Column("delivery_attempts", sa.Integer, nullable=False, server_default="0"),
         sa.Column("last_error", sa.String(500), nullable=True),
         sa.Column("created_at", sa.DateTime, nullable=False, server_default=sa.func.now()),

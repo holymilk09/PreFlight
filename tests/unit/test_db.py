@@ -47,8 +47,12 @@ class TestGetTenantSession:
             call_args = mock_session.execute.call_args
             # First positional argument is the text clause
             text_clause = call_args[0][0]
-            # Check that it contains the right SQL
-            assert "SET LOCAL app.tenant_id" in str(text_clause)
+            # Check that it contains the right SQL. We use set_config(..., true)
+            # rather than "SET LOCAL ... = :param" because PostgreSQL's SET does
+            # not accept bind parameters.
+            text_sql = str(text_clause)
+            assert "set_config('app.tenant_id'" in text_sql
+            assert "true" in text_sql
             # Check that tenant_id was passed as parameter
             params = call_args[0][1]
             assert params["tenant_id"] == str(tenant_id)

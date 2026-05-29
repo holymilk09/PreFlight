@@ -220,3 +220,36 @@ class TestEvaluateAlertsTenantRules:
         assert events[0].rule_id == rule.id
         assert events[0].severity == "critical"
         assert events[0].threshold == 0.10
+
+
+class TestWebhookUrlValidation:
+    """SSRF guard for outbound webhook URLs (src.api.alert_routes)."""
+
+    def _validate(self, url: str):
+        from src.api.alert_routes import _validate_webhook_url
+
+        return _validate_webhook_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "ftp://example.com/hook",  # non-http(s) scheme
+            "http://localhost/hook",
+            "http://127.0.0.1/hook",
+            "http://10.0.0.5/hook",
+            "http://192.168.1.10/hook",
+            "http://169.254.169.254/latest/meta-data",  # cloud metadata
+            "https://[::1]/hook",  # IPv6 loopback
+            "http:///nohost",  # missing host
+        ],
+    )
+    def test_blocked_urls_raise(self, url: str):
+        from src.api.errors import APIError
+
+        with pytest.raises(APIError):
+            self._validate(url)
+
+    @pytest.mark.parametrize("url", ["http://8.8.8.8/hook", "https://1.1.1.1/webhook"])
+    def test_public_ip_literals_allowed(self, url: str):
+        # Public IP literals require no DNS resolution and must pass.
+        assert self._validate(url) is None

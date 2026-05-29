@@ -62,6 +62,11 @@ logger = structlog.get_logger()
 # Provider cache TTL (5 minutes)
 PROVIDER_CACHE_TTL_SECONDS = 300
 
+# Strong references to fire-and-forget background tasks. asyncio only keeps weak
+# references to tasks, so an unreferenced task can be garbage-collected mid-flight.
+# We retain each task here and discard it via a done-callback once it finishes.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 router = APIRouter()
 
 
@@ -302,7 +307,9 @@ async def evaluate(
     # After commit, fire-and-forget webhook delivery (delivery only is async).
     if alert_event_ids:
         try:
-            asyncio.create_task(dispatch_webhooks(tenant.tenant_id, alert_event_ids))
+            task = asyncio.create_task(dispatch_webhooks(tenant.tenant_id, alert_event_ids))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception:
             logger.warning("webhook_dispatch_schedule_failed", evaluation_id=str(evaluation_id))
         try:
