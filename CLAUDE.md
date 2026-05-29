@@ -146,6 +146,15 @@ make clean      # Stop containers, remove volumes
 | `/v1/templates` | GET | Yes | List templates |
 | `/v1/templates` | POST | Yes | Register template |
 | `/v1/templates/{id}` | GET | Yes | Get template details |
+| `/v1/alert-rules` | GET/POST | Yes | List/create alert rules |
+| `/v1/alert-rules/{id}` | DELETE | Yes | Delete alert rule |
+| `/v1/webhooks` | GET/POST | Yes | List/create webhook endpoints |
+| `/v1/webhooks/{id}` | DELETE | Yes | Delete webhook endpoint |
+| `/v1/webhooks/{id}/test` | POST | Yes | Send signed test delivery |
+| `/v1/alerts` | GET | Yes | List alert events |
+| `/v1/analytics/summary` | GET | Yes | Aggregate analytics |
+| `/v1/analytics/timeseries` | GET | Yes | Timeseries analytics |
+| `/v1/analytics/extractors` | GET | Yes | Per-vendor analytics |
 
 Authentication: Include `X-API-Key: cp_xxxxx` header.
 

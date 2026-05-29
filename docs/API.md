@@ -88,6 +88,17 @@ curl -H "X-API-Key: cp_a1b2c3d4e5f67890a1b2c3d4e5f67890" \
 | `/v1/templates/{id}` | GET | Yes | Get template details |
 | `/v1/templates/{id}` | PUT | Yes | Update template |
 | `/v1/templates/{id}` | DELETE | Yes | Deprecate template |
+| `/v1/alert-rules` | POST | Yes | Create an alert rule |
+| `/v1/alert-rules` | GET | Yes | List alert rules |
+| `/v1/alert-rules/{id}` | DELETE | Yes | Delete an alert rule |
+| `/v1/webhooks` | POST | Yes | Create a webhook endpoint (returns secret once) |
+| `/v1/webhooks` | GET | Yes | List webhook endpoints (no secret) |
+| `/v1/webhooks/{id}` | DELETE | Yes | Delete a webhook endpoint |
+| `/v1/webhooks/{id}/test` | POST | Yes | Send a signed test delivery now |
+| `/v1/alerts` | GET | Yes | List generated alert events |
+| `/v1/analytics/summary` | GET | Yes | Aggregate analytics summary |
+| `/v1/analytics/timeseries` | GET | Yes | Timeseries analytics (day/hour) |
+| `/v1/analytics/extractors` | GET | Yes | Per-vendor extractor analytics |
 
 ---
 
@@ -446,6 +457,110 @@ curl -X POST https://api.preflight.dev/v1/templates \
     "correction_rules": []
   }'
 ```
+
+---
+
+## Alerting
+
+PreFlight evaluates governance thresholds on every `/v1/evaluate` call. When a
+tenant has defined no alert rules, built-in defaults apply (encoding the
+CLAUDE.md thresholds): drift `> 0.30` (warning), reliability `< 0.80` (warning),
+and unknown extractor provider (info). AlertEvents are persisted synchronously
+in the evaluation transaction; webhook delivery happens asynchronously.
+
+### Create Alert Rule: POST /v1/alert-rules
+
+```bash
+curl -X POST https://api.preflight.dev/v1/alert-rules \
+  -H "X-API-Key: cp_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "strict drift",
+    "metric": "drift",          // "drift" | "reliability" | "unknown_provider"
+    "comparator": "gt",          // "gt" | "lt" | "eq"
+    "threshold": 0.20,           // required for drift/reliability
+    "severity": "critical"       // "info" | "warning" | "critical"
+  }'
+```
+
+### List Alert Rules: GET /v1/alert-rules
+
+### Delete Alert Rule: DELETE /v1/alert-rules/{id}  (204)
+
+### Create Webhook: POST /v1/webhooks
+
+The signing `secret` is returned **only once**, at creation. Store it securely.
+
+```bash
+curl -X POST https://api.preflight.dev/v1/webhooks \
+  -H "X-API-Key: cp_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/hooks/preflight", "description": "prod"}'
+# -> { "id": "...", "url": "...", "secret": "<64 hex chars>", ... }
+```
+
+### List Webhooks: GET /v1/webhooks  (secret never returned)
+
+### Delete Webhook: DELETE /v1/webhooks/{id}  (204)
+
+### Test Webhook: POST /v1/webhooks/{id}/test
+
+Sends a signed sample payload immediately and returns the delivery result
+(`delivery_status`, `status_code`, `error`).
+
+### List Alert Events: GET /v1/alerts
+
+Query parameters: `severity`, `metric`, `delivery_status`, `limit`, `offset`.
+Response mirrors the evaluations list shape: `items`, `total`, `limit`,
+`offset`, `has_more`.
+
+### Verifying Webhook Signatures
+
+Each delivery includes two headers:
+
+- `X-PreFlight-Timestamp`: Unix epoch seconds when the request was signed.
+- `X-PreFlight-Signature`: `sha256=<hex>` HMAC of `"<timestamp>." + raw_body`,
+  keyed with your webhook `secret`.
+
+Recompute over the **exact raw request body bytes** and compare in constant time:
+
+```python
+import hashlib
+import hmac
+
+def verify(secret: str, raw_body: bytes, timestamp: str, signature_header: str) -> bool:
+    expected = "sha256=" + hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + raw_body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature_header)
+```
+
+Reject deliveries whose `X-PreFlight-Timestamp` is outside your accepted replay
+window (default 300s, configurable via `WEBHOOK_REPLAY_WINDOW_SECONDS`).
+
+---
+
+## Analytics
+
+Read-only aggregates over the tenant's evaluation history (RLS-scoped). All
+endpoints accept optional `from_ts` / `to_ts` ISO datetimes (default: last 30
+days; `from_ts` must be strictly before `to_ts`; range capped at 366 days).
+
+### Summary: GET /v1/analytics/summary
+
+Returns `total_evaluations`, `decision_breakdown`, `avg_drift`, `p95_drift`,
+`avg_reliability`, `p95_reliability`, and the resolved time range.
+
+### Timeseries: GET /v1/analytics/timeseries?interval=day|hour
+
+Per-bucket counts-by-decision and average drift/reliability. The range/interval
+combination is rejected if it would produce more than 1000 buckets.
+
+### Extractors: GET /v1/analytics/extractors
+
+Per-vendor `count`, `avg_drift`, `p95_drift`, `avg_reliability`,
+`avg_extractor_confidence`, `avg_extractor_latency_ms`, and `decision_breakdown`.
+Tenant-scoped — no cross-tenant data is ever exposed.
 
 ---
 
