@@ -86,6 +86,9 @@ ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE templates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE evaluations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alert_rules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_endpoints ENABLE ROW LEVEL SECURITY;
+ALTER TABLE alert_events ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for tenants table (tenants can only see themselves)
 CREATE POLICY tenant_isolation_tenants ON tenants
@@ -107,6 +110,19 @@ CREATE POLICY tenant_isolation_evaluations ON evaluations
     FOR ALL
     USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
+-- Create policies for alerting tables
+CREATE POLICY tenant_isolation_alert_rules ON alert_rules
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY tenant_isolation_webhook_endpoints ON webhook_endpoints
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY tenant_isolation_alert_events ON alert_events
+    FOR ALL
+    USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
 -- Audit log has NO RLS - only accessible to admins via separate connection
 -- ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY; -- intentionally not enabled
 """
@@ -117,9 +133,15 @@ DROP POLICY IF EXISTS tenant_isolation_tenants ON tenants;
 DROP POLICY IF EXISTS tenant_isolation_api_keys ON api_keys;
 DROP POLICY IF EXISTS tenant_isolation_templates ON templates;
 DROP POLICY IF EXISTS tenant_isolation_evaluations ON evaluations;
+DROP POLICY IF EXISTS tenant_isolation_alert_rules ON alert_rules;
+DROP POLICY IF EXISTS tenant_isolation_webhook_endpoints ON webhook_endpoints;
+DROP POLICY IF EXISTS tenant_isolation_alert_events ON alert_events;
 
 ALTER TABLE tenants DISABLE ROW LEVEL SECURITY;
 ALTER TABLE api_keys DISABLE ROW LEVEL SECURITY;
 ALTER TABLE templates DISABLE ROW LEVEL SECURITY;
 ALTER TABLE evaluations DISABLE ROW LEVEL SECURITY;
+ALTER TABLE alert_rules DISABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_endpoints DISABLE ROW LEVEL SECURITY;
+ALTER TABLE alert_events DISABLE ROW LEVEL SECURITY;
 """
