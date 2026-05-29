@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=1000, ge=1)
     rate_limit_unauthenticated: int = Field(default=10, ge=1)
 
+    # Fail-Closed Security & Webhooks (Phase 1)
+    security_fail_closed: bool = Field(
+        default=True,
+        description=(
+            "When True, reject requests if Redis (rate-limit/revocation backend) "
+            "is unavailable. Governance posture."
+        ),
+    )
+    webhook_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
+    webhook_replay_window_seconds: int = Field(default=300, ge=30, le=3600)
+
     # Request Limits
     max_request_body_size: int = Field(
         default=1_048_576,  # 1MB

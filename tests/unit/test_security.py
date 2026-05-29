@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import jwt as pyjwt
+import pytest
 
 from src.config import settings
 from src.security import (
@@ -315,6 +316,15 @@ class TestPasswordHashing:
         hashed = hash_password(password)
         assert verify_password(password, hashed)
         assert not verify_password("password123", hashed)
+
+
+@pytest.fixture(autouse=True)
+def _legacy_fail_open(monkeypatch):
+    """The synchronous decode_access_token revocation fallback honors the
+    security posture. These unit tests run without Redis and exercise the sync
+    path, so use legacy fail-open (the real auth path is async and fail-closed,
+    covered by tests/unit/test_fail_closed.py)."""
+    monkeypatch.setattr(settings, "security_fail_closed", False)
 
 
 class TestJWTCreation:

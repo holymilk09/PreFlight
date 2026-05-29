@@ -273,49 +273,62 @@ _TOKEN_BLOCKLIST_PREFIX = "token_blocklist:"
 def is_token_revoked(jti: str) -> bool:
     """Check if a token is revoked (in blocklist).
 
+    When the revocation backend (Redis) cannot be reliably consulted, the
+    return value follows the configured security posture:
+    - ``settings.security_fail_closed`` True  -> treat token as revoked (deny).
+    - ``settings.security_fail_closed`` False -> treat token as not revoked (allow, legacy).
+
     Args:
         jti: JWT ID to check.
 
     Returns:
-        True if token is revoked, False otherwise.
+        True if token is revoked (or unverifiable while fail-closed), False otherwise.
     """
     try:
-        from src.services.rate_limiter import get_redis_client
-
-        redis = get_redis_client()
-        if redis is None:
-            # Redis unavailable - fail open (token not revoked)
-            return False
-
-        # Check synchronously using Redis sync client
-        # Note: This is a blocking call but very fast (O(1) lookup)
+        # The synchronous path cannot drive an async Redis lookup from within a
+        # running event loop. Callers in an async context MUST use
+        # is_token_revoked_async() (the real auth path does exactly that).
         import asyncio
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If we're in an async context, we can't use run_until_complete
-            # Use a sync check instead
-            return False  # Fail open in async context without proper async call
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
 
-        return loop.run_until_complete(_async_is_revoked(jti))
+        if loop is not None and loop.is_running():
+            # Inside a running event loop we cannot block on run_until_complete,
+            # so we cannot verify here. Honor the security posture.
+            return settings.security_fail_closed
+
+        # No running loop: run the async check (which obtains its own Redis
+        # client and honors the posture on Redis unavailability) on a fresh loop.
+        sync_loop = asyncio.new_event_loop()
+        try:
+            return sync_loop.run_until_complete(_async_is_revoked(jti))
+        finally:
+            sync_loop.close()
     except Exception:
-        # On any error, fail open
-        return False
+        # On any error we cannot verify - honor the security posture.
+        return settings.security_fail_closed
 
 
 async def _async_is_revoked(jti: str) -> bool:
-    """Async check if token is revoked."""
+    """Async check if token is revoked.
+
+    When Redis is unavailable, returns ``settings.security_fail_closed``
+    (True => treat as revoked => deny).
+    """
     try:
         from src.services.rate_limiter import get_redis_client
 
         redis = await get_redis_client()
         if redis is None:
-            return False
+            return settings.security_fail_closed
 
         result = await redis.exists(f"{_TOKEN_BLOCKLIST_PREFIX}{jti}")
         return bool(result > 0)
     except Exception:
-        return False
+        return settings.security_fail_closed
 
 
 async def revoke_token(jti: str, expires_at: datetime) -> bool:

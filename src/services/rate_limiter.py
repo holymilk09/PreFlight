@@ -21,6 +21,7 @@ class RateLimitResult:
     limit: int
     remaining: int
     reset_after_seconds: int
+    degraded: bool = False
 
 
 # Lua script for atomic rate limiting (single round trip, no race conditions)
@@ -248,11 +249,20 @@ async def check_rate_limit(
     """
     # Check circuit breaker state
     if not await _should_attempt_rate_limit():
-        # Circuit is open - fail-open (allow request)
+        # Circuit is open - Redis is considered unavailable.
         logger.debug(
             "rate_limit_circuit_breaker_bypass",
             identifier=identifier[:8] + "..." if len(identifier) > 8 else identifier,
         )
+        if settings.security_fail_closed:
+            # Fail-closed: reject because we cannot verify the limit.
+            return RateLimitResult(
+                allowed=False,
+                limit=limit,
+                remaining=0,
+                reset_after_seconds=CIRCUIT_BREAKER_RESET_SECONDS,
+                degraded=True,
+            )
         return RateLimitResult(
             allowed=True,
             limit=limit,
@@ -268,13 +278,22 @@ async def check_rate_limit(
         return result
 
     except (RedisError, ConnectionError, TimeoutError, OSError) as e:
-        # Redis unavailable - fail-open (allow request)
+        # Redis unavailable.
         await _record_failure()
         logger.warning(
             "rate_limit_redis_unavailable",
             error_type=type(e).__name__,
             identifier=identifier[:8] + "..." if len(identifier) > 8 else identifier,
         )
+        if settings.security_fail_closed:
+            # Fail-closed: reject because we cannot verify the limit.
+            return RateLimitResult(
+                allowed=False,
+                limit=limit,
+                remaining=0,
+                reset_after_seconds=60,
+                degraded=True,
+            )
         return RateLimitResult(
             allowed=True,
             limit=limit,

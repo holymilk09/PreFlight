@@ -60,6 +60,12 @@ class AuditAction(str, Enum):
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
     PASSWORD_CHANGED = "password_changed"
+    SECURITY_DEGRADED = "security_degraded"
+    ALERT_TRIGGERED = "alert_triggered"
+    ALERT_RULE_CREATED = "alert_rule_created"
+    ALERT_RULE_DELETED = "alert_rule_deleted"
+    WEBHOOK_CREATED = "webhook_created"
+    WEBHOOK_DELETED = "webhook_deleted"
 
 
 # -----------------------------------------------------------------------------
@@ -230,6 +236,76 @@ class AuditLog(SQLModel, table=True):
     details: dict[str, Any] | None = SQLField(default=None, sa_column=Column(JSONB))
     ip_address: str | None = SQLField(default=None, max_length=45)  # IPv6 max length
     request_id: UUID | None = SQLField(default=None)
+
+
+class AlertRule(SQLModel, table=True):
+    """Tenant-defined alerting rule.
+
+    Compares an evaluation metric against a threshold. When breached, an
+    AlertEvent is generated. If a tenant defines no rules, built-in default
+    rules (encoding CLAUDE.md thresholds) apply.
+    """
+
+    __tablename__ = "alert_rules"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    name: str = SQLField(max_length=120, nullable=False)
+    # "drift" | "reliability" | "unknown_provider"
+    metric: str = SQLField(max_length=40, nullable=False)
+    # "gt" | "lt" | "eq" (for unknown_provider, ignored/"eq")
+    comparator: str = SQLField(max_length=4, nullable=False, default="gt")
+    threshold: float | None = SQLField(default=None)
+    # "info" | "warning" | "critical"
+    severity: str = SQLField(max_length=20, nullable=False, default="warning")
+    enabled: bool = SQLField(default=True, nullable=False)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class WebhookEndpoint(SQLModel, table=True):
+    """Tenant webhook endpoint for alert delivery.
+
+    The ``secret`` is retained server-side to compute the outbound HMAC
+    signature. It is stored in plaintext at rest (encryption deferred) and
+    is returned to the client only once, at creation time.
+    """
+
+    __tablename__ = "webhook_endpoints"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    url: str = SQLField(max_length=2048, nullable=False)
+    secret: str = SQLField(max_length=128, nullable=False)
+    description: str | None = SQLField(max_length=255, default=None)
+    enabled: bool = SQLField(default=True, nullable=False)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class AlertEvent(SQLModel, table=True):
+    """A generated alert event, persisted synchronously in the evaluate txn.
+
+    Webhook delivery state is updated asynchronously by the background task.
+    A null ``rule_id`` indicates a built-in default rule fired.
+    """
+
+    __tablename__ = "alert_events"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    evaluation_id: UUID | None = SQLField(default=None, foreign_key="evaluations.id", index=True)
+    rule_id: UUID | None = SQLField(default=None, foreign_key="alert_rules.id")
+    metric: str = SQLField(max_length=40, nullable=False)
+    value: float | None = SQLField(default=None)
+    threshold: float | None = SQLField(default=None)
+    severity: str = SQLField(max_length=20, nullable=False)
+    message: str = SQLField(max_length=500, nullable=False)
+    # "pending" | "sent" | "failed" | "no_endpoint"
+    delivery_status: str = SQLField(max_length=20, nullable=False, default="pending")
+    delivery_attempts: int = SQLField(default=0, nullable=False)
+    last_error: str | None = SQLField(max_length=500, default=None)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow, index=True)
 
 
 # -----------------------------------------------------------------------------
@@ -466,3 +542,163 @@ class UserResponse(SQLModel):
     tenant_id: UUID
     tenant_name: str
     created_at: datetime
+
+
+# -----------------------------------------------------------------------------
+# Alerting Schemas (table=False)
+# -----------------------------------------------------------------------------
+
+# Allowed enum values for alert rule validation.
+ALERT_METRICS = ("drift", "reliability", "unknown_provider")
+ALERT_COMPARATORS = ("gt", "lt", "eq")
+ALERT_SEVERITIES = ("info", "warning", "critical")
+ALERT_DELIVERY_STATUSES = ("pending", "sent", "failed", "no_endpoint")
+
+
+class AlertRuleCreate(SQLModel):
+    """Request body for creating an alert rule."""
+
+    name: str = Field(max_length=120)
+    metric: str = Field(description="drift | reliability | unknown_provider")
+    comparator: str = Field(default="gt", description="gt | lt | eq")
+    threshold: float | None = Field(default=None)
+    severity: str = Field(default="warning", description="info | warning | critical")
+    enabled: bool = Field(default=True)
+
+
+class AlertRuleResponse(SQLModel):
+    """Response body for an alert rule."""
+
+    id: UUID
+    name: str
+    metric: str
+    comparator: str
+    threshold: float | None
+    severity: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookCreate(SQLModel):
+    """Request body for creating a webhook endpoint."""
+
+    url: str = Field(max_length=2048, description="HTTPS endpoint to receive alert deliveries")
+    description: str | None = Field(default=None, max_length=255)
+
+
+class WebhookResponse(SQLModel):
+    """Response body for a webhook endpoint (never includes the secret)."""
+
+    id: UUID
+    url: str
+    description: str | None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookCreatedResponse(SQLModel):
+    """Response returned ONCE on webhook creation, includes the signing secret."""
+
+    id: UUID
+    url: str
+    description: str | None
+    enabled: bool
+    secret: str = Field(description="HMAC signing secret. Shown only once; store it securely.")
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookTestResponse(SQLModel):
+    """Result of sending a test webhook delivery."""
+
+    webhook_id: UUID
+    delivery_status: str
+    status_code: int | None = None
+    error: str | None = None
+
+
+class AlertEventRecord(SQLModel):
+    """Response body for a single alert event."""
+
+    id: UUID
+    evaluation_id: UUID | None
+    rule_id: UUID | None
+    metric: str
+    value: float | None
+    threshold: float | None
+    severity: str
+    message: str
+    delivery_status: str
+    delivery_attempts: int
+    last_error: str | None
+    created_at: datetime
+
+
+class AlertEventListResponse(SQLModel):
+    """Paginated response for listing alert events."""
+
+    items: list[AlertEventRecord]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+# -----------------------------------------------------------------------------
+# Analytics Schemas (table=False)
+# -----------------------------------------------------------------------------
+
+
+class AnalyticsSummaryResponse(SQLModel):
+    """Aggregate analytics summary over a time range."""
+
+    from_ts: datetime
+    to_ts: datetime
+    total_evaluations: int
+    decision_breakdown: dict[str, int] = Field(default_factory=dict)
+    avg_drift: float | None = None
+    p95_drift: float | None = None
+    avg_reliability: float | None = None
+    p95_reliability: float | None = None
+
+
+class AnalyticsTimeseriesBucket(SQLModel):
+    """A single time bucket in an analytics timeseries."""
+
+    bucket: datetime
+    total: int
+    decision_breakdown: dict[str, int] = Field(default_factory=dict)
+    avg_drift: float | None = None
+    avg_reliability: float | None = None
+
+
+class AnalyticsTimeseriesResponse(SQLModel):
+    """Timeseries analytics over a time range, bucketed by interval."""
+
+    from_ts: datetime
+    to_ts: datetime
+    interval: str
+    buckets: list[AnalyticsTimeseriesBucket] = Field(default_factory=list)
+
+
+class AnalyticsExtractorStat(SQLModel):
+    """Per-vendor extractor analytics."""
+
+    vendor: str | None
+    count: int
+    avg_drift: float | None = None
+    p95_drift: float | None = None
+    avg_reliability: float | None = None
+    avg_extractor_confidence: float | None = None
+    avg_extractor_latency_ms: float | None = None
+    decision_breakdown: dict[str, int] = Field(default_factory=dict)
+
+
+class AnalyticsExtractorResponse(SQLModel):
+    """Cross-vendor extractor analytics over a time range (tenant-scoped)."""
+
+    from_ts: datetime
+    to_ts: datetime
+    extractors: list[AnalyticsExtractorStat] = Field(default_factory=list)
