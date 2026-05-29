@@ -1,5 +1,6 @@
 """API routes for the Control Plane."""
 
+import asyncio
 import hashlib
 import json
 import time
@@ -23,7 +24,12 @@ from src.api.errors import (
     conflict,
 )
 from src.api.mappers import create_evaluation, evaluation_to_record, template_to_response
-from src.audit import log_audit_event, log_evaluation_requested, log_template_created
+from src.audit import (
+    log_alert_triggered,
+    log_audit_event,
+    log_evaluation_requested,
+    log_template_created,
+)
 from src.metrics import record_evaluation
 from src.models import (
     AuditAction,
@@ -43,6 +49,7 @@ from src.models import (
     TemplateStatusUpdate,
     TemplateUpdate,
 )
+from src.services.alerting import dispatch_webhooks, evaluate_alerts
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
 from src.services.rate_limiter import get_redis_client
@@ -268,7 +275,49 @@ async def evaluate(
         processing_time_ms=processing_time_ms,
     )
     db.add(evaluation)
+
+    # Evaluate alert rules and stage AlertEvents in the SAME transaction so they
+    # commit atomically with the evaluation. Wrapped so alerting can never break
+    # the core evaluate path. Webhook NETWORK delivery is deferred to a
+    # fire-and-forget task after commit.
+    alert_event_ids: list[UUID] = []
+    alert_severities: list[str] = []
+    try:
+        events = await evaluate_alerts(
+            db,
+            tenant.tenant_id,
+            evaluation_id,
+            drift_score,
+            reliability_score,
+            provider is not None,
+            body.extractor_metadata.vendor,
+        )
+        alert_event_ids = [e.id for e in events]
+        alert_severities = [e.severity for e in events]
+    except Exception:
+        logger.warning("alert_evaluation_failed", evaluation_id=str(evaluation_id))
+
     await db.commit()
+
+    # After commit, fire-and-forget webhook delivery (delivery only is async).
+    if alert_event_ids:
+        try:
+            asyncio.create_task(dispatch_webhooks(tenant.tenant_id, alert_event_ids))
+        except Exception:
+            logger.warning("webhook_dispatch_schedule_failed", evaluation_id=str(evaluation_id))
+        try:
+            await log_alert_triggered(
+                tenant_id=tenant.tenant_id,
+                evaluation_id=evaluation_id,
+                alert_count=len(alert_event_ids),
+                severities=alert_severities,
+                ip_address=request.client.host if request.client else None,
+                request_id=UUID(request.state.request_id)
+                if hasattr(request.state, "request_id")
+                else None,
+            )
+        except Exception:
+            logger.warning("alert_triggered_audit_failed", evaluation_id=str(evaluation_id))
 
     # Log audit event
     await log_evaluation_requested(
