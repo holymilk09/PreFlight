@@ -30,6 +30,30 @@ from src.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter_circuit_breaker():
+    """Reset the rate-limiter circuit-breaker global state between tests.
+
+    The breaker counters/flag and its event-loop-bound lock are module-global.
+    Without a reset, a test that trips the breaker open leaves it open for later
+    tests — and with ``security_fail_closed`` defaulting to True, an open breaker
+    now denies requests (503) instead of failing open, producing order-dependent
+    failures. Clearing the cached lock also avoids reusing a Lock bound to a
+    previous, now-closed event loop.
+    """
+    from src.services import rate_limiter
+
+    def _reset() -> None:
+        rate_limiter._circuit_breaker_failures = 0
+        rate_limiter._circuit_breaker_last_failure = 0.0
+        rate_limiter._circuit_breaker_open = False
+        rate_limiter._circuit_breaker_lock = None
+
+    _reset()
+    yield
+    _reset()
+
+
 @pytest.fixture
 def sample_structural_features() -> StructuralFeatures:
     """Standard invoice-like structural features."""

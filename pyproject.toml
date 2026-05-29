@@ -100,6 +100,7 @@ ignore = [
     "ARG002", # Unused method argument (false positive for pytest fixtures)
     "ARG003", # Unused class method argument (false positive for Pydantic validators)
     "SIM108", # Use ternary operator (style preference)
+    "UP042",  # str+Enum vs StrEnum: changing the base alters str() semantics (serialization risk)
 ]
 
 [tool.ruff.lint.isort]
