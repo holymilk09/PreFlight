@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import Field, field_validator
+from sqlalchemy import Index
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Column, Relationship, SQLModel
 from sqlmodel import Field as SQLField
@@ -163,6 +164,10 @@ class Evaluation(SQLModel, table=True):
     """Document evaluation record."""
 
     __tablename__ = "evaluations"
+    # Composite index for tenant-scoped time-range scans (analytics endpoints
+    # and the /v1/evaluations listing). Serves the tenant_id equality + created_at
+    # range/ordering in one access path.
+    __table_args__ = (Index("ix_evaluations_tenant_created", "tenant_id", "created_at"),)
 
     id: UUID = SQLField(default_factory=uuid7, primary_key=True)
     tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
