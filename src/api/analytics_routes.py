@@ -6,7 +6,7 @@ import structlog
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
-from src.api.auth import CurrentTenant
+from src.api.auth import ReadTenant
 from src.api.deps import TenantDbSession
 from src.api.errors import ErrorCode, bad_request
 from src.models import (
@@ -60,7 +60,7 @@ def _resolve_range(from_ts: datetime | None, to_ts: datetime | None) -> tuple[da
     summary="Aggregate analytics summary",
 )
 async def analytics_summary(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     from_ts: datetime | None = None,
     to_ts: datetime | None = None,
@@ -109,7 +109,7 @@ async def analytics_summary(
     summary="Timeseries analytics",
 )
 async def analytics_timeseries(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     interval: str = "day",
     from_ts: datetime | None = None,
@@ -189,7 +189,7 @@ async def analytics_timeseries(
     summary="Per-vendor extractor analytics",
 )
 async def analytics_extractors(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     from_ts: datetime | None = None,
     to_ts: datetime | None = None,

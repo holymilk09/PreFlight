@@ -10,7 +10,7 @@ import structlog
 from fastapi import APIRouter, Request, status
 from sqlalchemy import func, select
 
-from src.api.auth import CurrentTenant
+from src.api.auth import ManageAlertsTenant, ReadTenant
 from src.api.deps import TenantDbSession
 from src.api.errors import (
     ALERT_RULE_NOT_FOUND,
@@ -138,7 +138,7 @@ def _validate_webhook_url(url: str) -> None:
 async def create_alert_rule(
     request: Request,
     body: AlertRuleCreate,
-    tenant: CurrentTenant,
+    tenant: ManageAlertsTenant,
     db: TenantDbSession,
 ) -> AlertRuleResponse:
     """Create a tenant alert rule.
@@ -202,7 +202,7 @@ async def create_alert_rule(
     summary="List alert rules",
 )
 async def list_alert_rules(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     enabled: bool | None = None,
     limit: int = 100,
@@ -226,7 +226,7 @@ async def list_alert_rules(
 async def delete_alert_rule(
     request: Request,
     rule_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ManageAlertsTenant,
     db: TenantDbSession,
 ) -> None:
     """Delete an alert rule (RLS ensures it belongs to the tenant)."""
@@ -262,7 +262,7 @@ async def delete_alert_rule(
 async def create_webhook(
     request: Request,
     body: WebhookCreate,
-    tenant: CurrentTenant,
+    tenant: ManageAlertsTenant,
     db: TenantDbSession,
 ) -> WebhookCreatedResponse:
     """Create a webhook endpoint. The signing secret is returned only once."""
@@ -296,7 +296,7 @@ async def create_webhook(
     summary="List webhook endpoints",
 )
 async def list_webhooks(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     limit: int = 100,
     offset: int = 0,
@@ -321,7 +321,7 @@ async def list_webhooks(
 async def delete_webhook(
     request: Request,
     webhook_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ManageAlertsTenant,
     db: TenantDbSession,
 ) -> None:
     """Delete a webhook endpoint (RLS ensures it belongs to the tenant)."""
@@ -350,7 +350,7 @@ async def delete_webhook(
 )
 async def test_webhook(
     webhook_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ManageAlertsTenant,
     db: TenantDbSession,
 ) -> WebhookTestResponse:
     """Send a signed sample payload now and return the delivery result (sync)."""
@@ -401,7 +401,7 @@ async def test_webhook(
     summary="List alert events",
 )
 async def list_alerts(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     severity: str | None = None,
     metric: str | None = None,

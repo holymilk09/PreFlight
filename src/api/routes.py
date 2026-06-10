@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid_extensions import uuid7
 
-from src.api.auth import CurrentTenant
+from src.api.auth import EvaluateTenant, ManageTemplatesTenant, ReadTenant
 from src.api.deps import TenantDbSession
 from src.api.errors import (
     EVALUATION_NOT_FOUND,
@@ -185,7 +185,7 @@ async def get_template_or_404(template_id: UUID, db: AsyncSession) -> Template:
 async def evaluate(
     request: Request,
     body: EvaluateRequest,
-    tenant: CurrentTenant,
+    tenant: EvaluateTenant,
     db: TenantDbSession,
 ) -> EvaluateResponse:
     """Evaluate document extraction metadata and return governance decision.
@@ -377,7 +377,7 @@ async def evaluate(
     summary="List evaluation history",
 )
 async def list_evaluations(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     decision_filter: Decision | None = None,
     correlation_id: str | None = None,
@@ -465,7 +465,7 @@ async def list_evaluations(
 )
 async def get_evaluation(
     evaluation_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
 ) -> EvaluationRecord:
     """Get details of a specific evaluation.
@@ -503,7 +503,7 @@ async def get_evaluation(
     summary="List templates",
 )
 async def list_templates(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     status_filter: TemplateStatus | None = None,
     limit: int = 100,
@@ -536,7 +536,7 @@ async def list_templates(
 async def create_template(
     request: Request,
     body: TemplateCreate,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Register a new document template.
@@ -612,7 +612,7 @@ async def create_template(
 )
 async def get_template(
     template_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Get details of a specific template.
@@ -634,7 +634,7 @@ async def update_template(
     request: Request,
     template_id: UUID,
     body: TemplateUpdate,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Update a template's configurable fields.
@@ -692,7 +692,7 @@ async def update_template(
 async def delete_template(
     request: Request,
     template_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> None:
     """Deprecate a template (soft delete).
@@ -741,7 +741,7 @@ async def update_template_status(
     request: Request,
     template_id: UUID,
     body: TemplateStatusUpdate,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Change a template's status.
@@ -799,7 +799,7 @@ async def update_template_status(
     summary="Get detailed service status",
 )
 async def get_status(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
 ) -> DetailedHealthResponse:
     """Get detailed service status (requires authentication).

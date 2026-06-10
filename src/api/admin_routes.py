@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from src.api.auth import AuthenticatedTenant, validate_api_key
+from src.api.auth import DEFAULT_KEY_SCOPES, AuthenticatedTenant, validate_api_key
 from src.audit import log_audit_event
 from src.db import async_session_maker
 from src.models import APIKey, AuditAction, AuditLog, Template, Tenant
@@ -389,15 +389,17 @@ async def create_api_key(
                 detail="Tenant not found",
             )
 
-        # Generate new API key
+        # Generate new API key. Default to least-privilege scopes when the
+        # caller does not specify any, so new keys are never created omnipotent.
         key_components = generate_api_key()
+        scopes = body.scopes or DEFAULT_KEY_SCOPES
 
         api_key = APIKey(
             tenant_id=tenant_id,
             key_hash=key_components.key_hash,
             key_prefix=key_components.key_prefix,
             name=body.name,
-            scopes=body.scopes,
+            scopes=scopes,
             rate_limit=body.rate_limit,
         )
         session.add(api_key)
@@ -414,7 +416,7 @@ async def create_api_key(
                 "target_tenant_id": str(tenant_id),
                 "key_prefix": key_components.key_prefix,
                 "name": body.name,
-                "scopes": body.scopes,
+                "scopes": scopes,
             },
             ip_address=request.client.host if request.client else None,
         )

@@ -1,5 +1,6 @@
 """API key authentication for the Control Plane API."""
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -163,5 +164,50 @@ async def _log_failed_auth(
     await session.commit()
 
 
-# Type alias for dependency injection
+# Type alias for dependency injection (authentication only, no scope check)
 CurrentTenant = Annotated[AuthenticatedTenant, Depends(validate_api_key)]
+
+
+# -----------------------------------------------------------------------------
+# Scope enforcement
+# -----------------------------------------------------------------------------
+
+# Scope taxonomy. A key holding "*" satisfies every scope (see has_scope).
+SCOPE_EVALUATE = "evaluate"  # submit metadata for evaluation
+SCOPE_READ = "read"  # read evaluations, templates, alerts, analytics, status
+SCOPE_MANAGE_TEMPLATES = "manage_templates"  # create/update/deprecate templates
+SCOPE_MANAGE_ALERTS = "manage_alerts"  # manage alert rules and webhook endpoints
+SCOPE_ADMIN = "admin"  # tenant/key administration (enforced in admin_routes)
+
+# Sensible least-privilege default applied to newly created keys when the
+# caller does not specify scopes (a typical API client needs to evaluate + read).
+DEFAULT_KEY_SCOPES = [SCOPE_EVALUATE, SCOPE_READ]
+
+
+def require_scope(scope: str) -> Callable[..., Awaitable[AuthenticatedTenant]]:
+    """Build a dependency that authenticates the key AND requires ``scope``.
+
+    Existing keys are backfilled with the "*" wildcard (migration 007), so this
+    is backwards compatible; new keys are granted least-privilege scopes.
+    """
+
+    async def _require_scope(
+        tenant: Annotated[AuthenticatedTenant, Depends(validate_api_key)],
+    ) -> AuthenticatedTenant:
+        if not tenant.has_scope(scope):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This operation requires the '{scope}' scope.",
+            )
+        return tenant
+
+    return _require_scope
+
+
+# Per-capability dependency aliases used by the route modules.
+EvaluateTenant = Annotated[AuthenticatedTenant, Depends(require_scope(SCOPE_EVALUATE))]
+ReadTenant = Annotated[AuthenticatedTenant, Depends(require_scope(SCOPE_READ))]
+ManageTemplatesTenant = Annotated[
+    AuthenticatedTenant, Depends(require_scope(SCOPE_MANAGE_TEMPLATES))
+]
+ManageAlertsTenant = Annotated[AuthenticatedTenant, Depends(require_scope(SCOPE_MANAGE_ALERTS))]
