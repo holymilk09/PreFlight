@@ -27,6 +27,7 @@ from src.config import settings
 from src.db import get_tenant_session
 from src.metrics import record_alert_event, record_webhook_delivery
 from src.models import AlertEvent, AlertRule, WebhookEndpoint
+from src.security import decrypt_secret
 
 logger = structlog.get_logger()
 
@@ -276,7 +277,7 @@ async def _deliver_one(
 
     body = json.dumps(_event_body(event), separators=(",", ":")).encode()
     timestamp = str(int(datetime.now(UTC).timestamp()))
-    signature = sign_payload(endpoint.secret, body, timestamp)
+    signature = sign_payload(decrypt_secret(endpoint.secret), body, timestamp)
     headers = {
         "Content-Type": "application/json",
         TIMESTAMP_HEADER: timestamp,

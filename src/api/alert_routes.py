@@ -46,6 +46,7 @@ from src.models import (
     WebhookResponse,
     WebhookTestResponse,
 )
+from src.security import encrypt_secret
 from src.services.alerting import _deliver_one
 
 logger = structlog.get_logger()
@@ -268,10 +269,13 @@ async def create_webhook(
     """Create a webhook endpoint. The signing secret is returned only once."""
     _validate_webhook_url(body.url)
 
+    # Generate the signing secret in plaintext (returned once), store it
+    # encrypted at rest.
+    plaintext_secret = secrets.token_hex(32)
     endpoint = WebhookEndpoint(
         tenant_id=tenant.tenant_id,
         url=body.url,
-        secret=secrets.token_hex(32),
+        secret=encrypt_secret(plaintext_secret),
         description=body.description,
     )
     db.add(endpoint)
@@ -286,7 +290,7 @@ async def create_webhook(
         request_id=_request_id(request),
     )
 
-    return webhook_to_created_response(endpoint)
+    return webhook_to_created_response(endpoint, plaintext_secret)
 
 
 @router.get(

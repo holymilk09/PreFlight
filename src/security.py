@@ -1,5 +1,6 @@
 """Security utilities for API key hashing, password hashing, and JWT."""
 
+import base64
 import hashlib
 import secrets
 from datetime import datetime, timedelta
@@ -8,8 +9,41 @@ from uuid import UUID
 
 import bcrypt
 import jwt
+from cryptography.fernet import Fernet
 
 from src.config import settings
+
+# Prefix marking a webhook secret as encrypted-at-rest, so legacy plaintext
+# rows (created before encryption) are detected and read transparently and the
+# encrypting migration stays idempotent.
+_WEBHOOK_ENC_PREFIX = "enc:v1:"
+
+
+def _webhook_fernet() -> Fernet:
+    """Fernet cipher for webhook secrets.
+
+    Uses the operator-provided ``webhook_enc_key`` if set (must be a valid
+    Fernet key); otherwise derives one deterministically from ``jwt_secret`` so
+    no additional required secret is introduced for existing deployments.
+    """
+    if settings.webhook_enc_key:
+        return Fernet(settings.webhook_enc_key.encode())
+    derived = base64.urlsafe_b64encode(hashlib.sha256(settings.jwt_secret.encode()).digest())
+    return Fernet(derived)
+
+
+def encrypt_secret(plaintext: str) -> str:
+    """Encrypt a webhook signing secret for storage at rest."""
+    token = _webhook_fernet().encrypt(plaintext.encode()).decode()
+    return _WEBHOOK_ENC_PREFIX + token
+
+
+def decrypt_secret(stored: str) -> str:
+    """Decrypt a stored webhook secret. Legacy plaintext rows pass through."""
+    if not stored.startswith(_WEBHOOK_ENC_PREFIX):
+        return stored
+    token = stored[len(_WEBHOOK_ENC_PREFIX) :].encode()
+    return _webhook_fernet().decrypt(token).decode()
 
 
 class APIKeyComponents(NamedTuple):

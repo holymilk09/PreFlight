@@ -45,6 +45,14 @@ class Settings(BaseSettings):
 
     api_key_salt: str = Field(..., description="Salt for API key hashing")
 
+    # Webhook secret encryption at rest (Fernet). If unset, a key is derived
+    # from jwt_secret. Generate a dedicated key with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    webhook_enc_key: str | None = Field(
+        default=None,
+        description="Fernet key for encrypting webhook signing secrets at rest",
+    )
+
     # CORS
     allowed_origins: str = Field(
         default="",

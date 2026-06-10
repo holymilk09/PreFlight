@@ -181,14 +181,19 @@ def webhook_to_response(endpoint: WebhookEndpoint) -> WebhookResponse:
     )
 
 
-def webhook_to_created_response(endpoint: WebhookEndpoint) -> WebhookCreatedResponse:
-    """Convert a WebhookEndpoint to a WebhookCreatedResponse (includes secret once)."""
+def webhook_to_created_response(endpoint: WebhookEndpoint, secret: str) -> WebhookCreatedResponse:
+    """Convert a WebhookEndpoint to a WebhookCreatedResponse.
+
+    ``secret`` is the plaintext signing secret, returned exactly once at
+    creation. It is NOT read from ``endpoint.secret`` (which is encrypted at
+    rest).
+    """
     return WebhookCreatedResponse(
         id=endpoint.id,
         url=endpoint.url,
         description=endpoint.description,
         enabled=endpoint.enabled,
-        secret=endpoint.secret,
+        secret=secret,
         created_at=endpoint.created_at,
         updated_at=endpoint.updated_at,
     )

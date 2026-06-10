@@ -281,7 +281,9 @@ class WebhookEndpoint(SQLModel, table=True):
     id: UUID = SQLField(default_factory=uuid7, primary_key=True)
     tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
     url: str = SQLField(max_length=2048, nullable=False)
-    secret: str = SQLField(max_length=128, nullable=False)
+    # Stores the signing secret encrypted at rest (Fernet); ciphertext is longer
+    # than the 64-char plaintext, so allow ample width.
+    secret: str = SQLField(max_length=512, nullable=False)
     description: str | None = SQLField(max_length=255, default=None)
     enabled: bool = SQLField(default=True, nullable=False)
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
