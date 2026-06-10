@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import Field, field_validator
-from sqlalchemy import Index
+from sqlalchemy import DDL, Index, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Column, Relationship, SQLModel
 from sqlmodel import Field as SQLField
@@ -241,6 +241,29 @@ class AuditLog(SQLModel, table=True):
     details: dict[str, Any] | None = SQLField(default=None, sa_column=Column(JSONB))
     ip_address: str | None = SQLField(default=None, max_length=45)  # IPv6 max length
     request_id: UUID | None = SQLField(default=None)
+
+
+# Make audit_log append-only at the database level: a BEFORE UPDATE OR DELETE
+# trigger rejects any row mutation, for every role (tamper-evidence for SR 26-2
+# style audit requirements). INSERT and TRUNCATE/DROP are unaffected, so normal
+# logging and test teardown still work. Attached to create_all (tests) and
+# replicated in migration 009 for existing databases.
+_AUDIT_NO_MUTATE_FN = DDL(  # type: ignore[no-untyped-call]
+    """
+    CREATE OR REPLACE FUNCTION audit_log_no_mutate() RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'audit_log is append-only; updates and deletes are not permitted';
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+_AUDIT_NO_MUTATE_TRIGGER = DDL(  # type: ignore[no-untyped-call]
+    "CREATE TRIGGER audit_log_append_only "
+    "BEFORE UPDATE OR DELETE ON audit_log "
+    "FOR EACH ROW EXECUTE FUNCTION audit_log_no_mutate()"
+)
+event.listen(AuditLog.__table__, "after_create", _AUDIT_NO_MUTATE_FN)  # type: ignore[attr-defined]
+event.listen(AuditLog.__table__, "after_create", _AUDIT_NO_MUTATE_TRIGGER)  # type: ignore[attr-defined]
 
 
 class AlertRule(SQLModel, table=True):
