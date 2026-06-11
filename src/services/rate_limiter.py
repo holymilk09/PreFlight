@@ -158,7 +158,11 @@ async def get_redis_client() -> aioredis.Redis:
     if _redis_client is None:
         _redis_client = aioredis.from_url(
             settings.redis_url,
-            password=settings.redis_password,
+            # Only override AUTH when a password is configured. Passing an empty
+            # password to a no-auth broker (e.g. managed Redis on an isolated
+            # network) raises "Client sent AUTH, but no password is set"; None
+            # lets redis-py fall back to any credentials embedded in REDIS_URL.
+            password=settings.redis_password or None,
             encoding="utf-8",
             decode_responses=True,
             max_connections=20,  # Connection pool limit

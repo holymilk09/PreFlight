@@ -27,12 +27,24 @@ class Settings(BaseSettings):
         description="PostgreSQL connection URL with asyncpg driver",
     )
     postgres_user: str = Field(default="controlplane")
-    postgres_password: str = Field(..., description="PostgreSQL password")
+    postgres_password: str = Field(
+        default="",
+        description=(
+            "PostgreSQL password. Only needed when DATABASE_URL omits credentials "
+            "(e.g. local docker-compose); managed deploys carry creds in DATABASE_URL."
+        ),
+    )
     postgres_db: str = Field(default="controlplane")
 
     # Redis
     redis_url: str = Field(..., description="Redis connection URL")
-    redis_password: str = Field(..., description="Redis password")
+    redis_password: str = Field(
+        default="",
+        description=(
+            "Redis password. Leave empty when REDIS_URL embeds credentials or the "
+            "broker needs no auth (e.g. managed Redis on an isolated network)."
+        ),
+    )
 
     # Temporal
     temporal_host: str = Field(default="localhost:7233")
@@ -167,12 +179,37 @@ class Settings(BaseSettings):
     @field_validator("postgres_password", "redis_password")
     @classmethod
     def validate_password_not_placeholder(cls, v: str) -> str:
-        """Ensure passwords are not placeholder values."""
-        if "GENERATE_" in v.upper() or v == "password" or v == "":
+        """Reject obvious placeholder passwords when one is provided.
+
+        An empty value is allowed and means "not set": credentials then come from
+        the connection URL, or the backend needs no auth (e.g. a managed Redis on
+        an isolated network). This keeps managed-platform deploys turn-key while
+        still catching a committed placeholder when a value *is* supplied.
+        """
+        if v and ("GENERATE_" in v.upper() or v == "password"):
             raise ValueError(
                 "Password appears to be a placeholder. "
                 "Generate a secure value with: openssl rand -hex 32"
             )
+        return v
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        """Normalize the DB URL scheme to the asyncpg driver.
+
+        Managed platforms (Render, Railway, Heroku) hand out ``postgres://`` or
+        ``postgresql://`` URLs, but both the async engine (src/db.py) and Alembic
+        (migrations/env.py) require the asyncpg driver. Normalizing here means the
+        same value works locally and in the cloud with no manual rewriting. URLs
+        that already pin a driver (``postgresql+asyncpg://`` etc.) are left as-is.
+        """
+        if v.startswith(("postgresql+", "postgres+")):
+            return v
+        if v.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + v[len("postgresql://") :]
+        if v.startswith("postgres://"):
+            return "postgresql+asyncpg://" + v[len("postgres://") :]
         return v
 
     @property

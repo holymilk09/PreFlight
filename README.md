@@ -112,10 +112,17 @@ railway up
 
 ### Deploy to Render
 
-```bash
-# Connect your repo at render.com/blueprints
-# Render auto-detects render.yaml
-```
+Connect your repo at [render.com/blueprints](https://render.com/blueprints) — Render
+auto-detects `render.yaml` and stands up the full stack with no manual env setup:
+
+- Provisions the managed **PostgreSQL** and **Redis** and wires their connection
+  strings in (the `postgres://` scheme is normalized to `asyncpg` automatically).
+- **Generates** the required `JWT_SECRET` and `API_KEY_SALT` secrets.
+- Runs `alembic upgrade head` on every deploy via `preDeployCommand`, before the
+  new image goes live.
+- Boots fail-closed (`SECURITY_FAIL_CLOSED=true`) with API docs disabled.
+
+`SENTRY_DSN` is the only optional value to set by hand in the dashboard.
 
 ### Local Development
 
