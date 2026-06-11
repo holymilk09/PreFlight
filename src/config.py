@@ -45,6 +45,29 @@ class Settings(BaseSettings):
 
     api_key_salt: str = Field(..., description="Salt for API key hashing")
 
+    # Login Lockout (per-user brute-force protection)
+    login_max_failed_attempts: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="Consecutive failed logins before an account is temporarily locked",
+    )
+    login_lockout_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=1440,
+        description="Minutes an account stays locked after too many failed logins",
+    )
+    login_lockout_reveal: bool = Field(
+        default=False,
+        description=(
+            "When True, a locked account is told so explicitly (HTTP 429 + Retry-After). "
+            "When False (default), it receives the same generic 401 as a wrong password "
+            "so the lock does not become an account-enumeration oracle. Lockouts are always "
+            "recorded in the audit trail regardless of this setting."
+        ),
+    )
+
     # Webhook secret encryption at rest (Fernet). If unset, a key is derived
     # from jwt_secret. Generate a dedicated key with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

@@ -60,6 +60,7 @@ class AuditAction(str, Enum):
     USER_SIGNUP = "user_signup"
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
+    ACCOUNT_LOCKED = "account_locked"
     PASSWORD_CHANGED = "password_changed"
     SECURITY_DEGRADED = "security_degraded"
     ALERT_TRIGGERED = "alert_triggered"
@@ -103,6 +104,11 @@ class User(SQLModel, table=True):
     is_active: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     last_login_at: datetime | None = SQLField(default=None)
+    # Per-user brute-force lockout state. failed_login_count tracks consecutive
+    # failed logins since the last success/lock; locked_until, when in the future,
+    # blocks authentication even with a correct password.
+    failed_login_count: int = SQLField(default=0, nullable=False)
+    locked_until: datetime | None = SQLField(default=None)
 
     # Relationships
     tenant: Tenant = Relationship(back_populates="users")

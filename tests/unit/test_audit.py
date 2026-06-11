@@ -46,8 +46,9 @@ class TestAuditAction:
     def test_audit_action_members(self):
         """AuditAction should include the original 16 plus Phase 1 additions."""
         # 16 original + 6 Phase 1 (security_degraded, alert_triggered,
-        # alert_rule_created/deleted, webhook_created/deleted).
-        assert len(AuditAction) == 22
+        # alert_rule_created/deleted, webhook_created/deleted) + 1 Phase A
+        # (account_locked, login lockout).
+        assert len(AuditAction) == 23
         for member in (
             "SECURITY_DEGRADED",
             "ALERT_TRIGGERED",
@@ -55,6 +56,7 @@ class TestAuditAction:
             "ALERT_RULE_DELETED",
             "WEBHOOK_CREATED",
             "WEBHOOK_DELETED",
+            "ACCOUNT_LOCKED",
         ):
             assert hasattr(AuditAction, member)
 
