@@ -196,5 +196,7 @@ class TestAppConfiguration:
         """Health endpoint should be registered."""
         from src.api.main import app
 
-        routes = [route.path for route in app.routes]
+        # Starlette >= 1.0 wraps included routers in path-less objects, so only
+        # inspect entries that expose a path (/health is registered on the app).
+        routes = [route.path for route in app.routes if hasattr(route, "path")]
         assert "/health" in routes

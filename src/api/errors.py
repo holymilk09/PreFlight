@@ -48,6 +48,7 @@ class ErrorCode(str, Enum):
 
     # Rate limiting (429)
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
 
     # Server errors (500)
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -140,6 +141,16 @@ def rate_limited(message: str = "Rate limit exceeded", **details: Any) -> APIErr
     return APIError(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         code=ErrorCode.RATE_LIMIT_EXCEEDED,
+        message=message,
+        details=details if details else None,
+    )
+
+
+def quota_exceeded(message: str = "Monthly evaluation quota exceeded", **details: Any) -> APIError:
+    """Create a 429 error for an exhausted monthly plan quota."""
+    return APIError(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        code=ErrorCode.QUOTA_EXCEEDED,
         message=message,
         details=details if details else None,
     )

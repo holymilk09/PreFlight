@@ -22,6 +22,7 @@ from src.api.errors import (
     ErrorCode,
     bad_request,
     conflict,
+    quota_exceeded,
 )
 from src.api.mappers import create_evaluation, evaluation_to_record, template_to_response
 from src.audit import (
@@ -30,6 +31,7 @@ from src.audit import (
     log_evaluation_requested,
     log_template_created,
 )
+from src.config import settings
 from src.metrics import record_evaluation
 from src.models import (
     AuditAction,
@@ -48,7 +50,10 @@ from src.models import (
     TemplateStatus,
     TemplateStatusUpdate,
     TemplateUpdate,
+    Tenant,
+    UsageResponse,
 )
+from src.services import usage as usage_service
 from src.services.alerting import dispatch_webhooks, evaluate_alerts
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
@@ -176,6 +181,49 @@ async def get_template_or_404(template_id: UUID, db: AsyncSession) -> Template:
 # -----------------------------------------------------------------------------
 
 
+async def _tenant_usage(db: AsyncSession, tenant_id: UUID) -> usage_service.UsageSnapshot:
+    """Compute the current-month usage snapshot for a tenant.
+
+    ``db`` must be the tenant-scoped session (RLS restricts the count); the
+    tenant row itself carries the plan / custom limit in its settings.
+    """
+    tenant_row = await db.get(Tenant, tenant_id)
+    return await usage_service.get_usage(db, tenant_row.settings if tenant_row else None)
+
+
+async def _enforce_monthly_quota(db: AsyncSession, tenant_id: UUID, request: Request) -> None:
+    """Reject the request when the tenant's monthly quota is exhausted.
+
+    No-op unless ``USAGE_ENFORCE_QUOTA`` is enabled — the default posture is
+    metering-only, so a plan overage never silently breaks a customer pipeline.
+    When enforcement blocks a request, the event is recorded in the audit trail.
+    """
+    if not settings.usage_enforce_quota:
+        return
+
+    snapshot = await _tenant_usage(db, tenant_id)
+    if not snapshot.exceeded:
+        return
+
+    await log_audit_event(
+        action=AuditAction.QUOTA_EXCEEDED,
+        tenant_id=tenant_id,
+        details={
+            "plan": snapshot.plan,
+            "monthly_limit": snapshot.monthly_limit,
+            "used": snapshot.used,
+            "period_start": snapshot.period_start.isoformat(),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    raise quota_exceeded(
+        plan=snapshot.plan,
+        monthly_limit=snapshot.monthly_limit,
+        used=snapshot.used,
+        period_end=snapshot.period_end.isoformat(),
+    )
+
+
 @router.post(
     "/evaluate",
     response_model=EvaluateResponse,
@@ -202,6 +250,9 @@ async def evaluate(
     """
     start_time = time.perf_counter()
     alerts: list[str] = []
+
+    # Quota gate (only when enforcement is enabled; metering-only by default).
+    await _enforce_monthly_quota(db, tenant.tenant_id, request)
 
     # Look up provider configuration (cached)
     provider = await get_cached_provider(body.extractor_metadata.vendor, db)
@@ -841,4 +892,32 @@ async def get_status(
         status="healthy" if all_healthy else "degraded",
         version="0.1.0",
         services=services,
+    )
+
+
+@router.get(
+    "/usage",
+    response_model=UsageResponse,
+    tags=["Usage"],
+    summary="Monthly usage metering",
+)
+async def get_usage(
+    tenant: ReadTenant,
+    db: TenantDbSession,
+) -> UsageResponse:
+    """Evaluations consumed this calendar month (UTC) against the plan quota.
+
+    ``monthly_limit``/``remaining`` are null for unlimited (enterprise) plans.
+    ``enforcement_enabled`` reports whether an exhausted quota blocks
+    /v1/evaluate (429 QUOTA_EXCEEDED) or usage is metering-only.
+    """
+    snapshot = await _tenant_usage(db, tenant.tenant_id)
+    return UsageResponse(
+        plan=snapshot.plan,
+        period_start=snapshot.period_start,
+        period_end=snapshot.period_end,
+        monthly_limit=snapshot.monthly_limit,
+        used=snapshot.used,
+        remaining=snapshot.remaining,
+        enforcement_enabled=settings.usage_enforce_quota,
     )

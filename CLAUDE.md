@@ -150,6 +150,7 @@ make clean      # Stop containers, remove volumes
 | `/v1/alert-rules/{id}` | DELETE | Yes | Delete alert rule |
 | `/v1/webhooks` | GET/POST | Yes | List/create webhook endpoints |
 | `/v1/webhooks/{id}` | DELETE | Yes | Delete webhook endpoint |
+| `/v1/usage` | GET | Yes | Monthly usage vs plan quota |
 | `/v1/webhooks/{id}/test` | POST | Yes | Send signed test delivery |
 | `/v1/alerts` | GET | Yes | List alert events |
 | `/v1/analytics/summary` | GET | Yes | Aggregate analytics |

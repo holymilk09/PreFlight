@@ -123,6 +123,16 @@ class Settings(BaseSettings):
     webhook_timeout_seconds: float = Field(default=5.0, ge=0.5, le=30.0)
     webhook_replay_window_seconds: int = Field(default=300, ge=30, le=3600)
 
+    # Usage Metering
+    usage_enforce_quota: bool = Field(
+        default=False,
+        description=(
+            "When True, /v1/evaluate rejects requests (429 QUOTA_EXCEEDED) once the "
+            "tenant's monthly plan quota is exhausted. Default is metering-only: "
+            "usage is reported via /v1/usage but never blocks the pipeline."
+        ),
+    )
+
     # Request Limits
     max_request_body_size: int = Field(
         default=1_048_576,  # 1MB

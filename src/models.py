@@ -57,6 +57,7 @@ class AuditAction(str, Enum):
     EVALUATION_REQUESTED = "evaluation_requested"
     AUTH_FAILED = "auth_failed"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
+    QUOTA_EXCEEDED = "quota_exceeded"
     USER_SIGNUP = "user_signup"
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
@@ -578,6 +579,24 @@ class UserResponse(SQLModel):
     tenant_id: UUID
     tenant_name: str
     created_at: datetime
+
+
+class UsageResponse(SQLModel):
+    """Response for the monthly usage metering endpoint."""
+
+    plan: str
+    period_start: datetime
+    period_end: datetime
+    monthly_limit: int | None = Field(
+        default=None, description="Evaluations allowed this period (null = unlimited)"
+    )
+    used: int = Field(description="Evaluations consumed this period")
+    remaining: int | None = Field(
+        default=None, description="Evaluations left this period (null = unlimited)"
+    )
+    enforcement_enabled: bool = Field(
+        description="Whether the quota is enforced (429 when exceeded) or metering-only"
+    )
 
 
 # -----------------------------------------------------------------------------

@@ -127,6 +127,7 @@ plugins = ["pydantic.mypy"]
 module = [
     "temporalio.*",
     "redis.*",
+    "uuid_extensions.*",
 ]
 ignore_missing_imports = true
 
