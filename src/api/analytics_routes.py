@@ -15,7 +15,11 @@ from src.models import (
     AnalyticsSummaryResponse,
     AnalyticsTimeseriesBucket,
     AnalyticsTimeseriesResponse,
+    CalibrationBand,
+    CalibrationResponse,
     Evaluation,
+    EvaluationFeedback,
+    FeedbackOutcome,
 )
 
 logger = structlog.get_logger()
@@ -241,3 +245,134 @@ async def analytics_extractors(
         )
 
     return AnalyticsExtractorResponse(from_ts=start, to_ts=end, extractors=extractors)
+
+
+# Reliability-score bands for calibration (10 equal bands over [0, 1]).
+CALIBRATION_BANDS = 10
+
+
+def _enum_key(value: object) -> str:
+    """Normalize an enum-or-string DB value to its string key."""
+    return value.value if hasattr(value, "value") else str(value)
+
+
+def summarize_calibration(
+    decision_outcome_counts: dict[str, dict[str, int]],
+) -> tuple[float | None, float | None, int, int]:
+    """Derive headline calibration metrics from decision × outcome counts.
+
+    Returns (auto_process_precision, review_catch_rate, errors_caught,
+    missed_errors). MATCH is the auto-process path; every other decision is a
+    "flagged" document. An outcome other than ``correct`` counts as bad.
+    """
+    correct = FeedbackOutcome.CORRECT.value
+
+    match_counts = decision_outcome_counts.get("MATCH", {})
+    match_total = sum(match_counts.values())
+    match_correct = match_counts.get(correct, 0)
+
+    flagged_total = 0
+    flagged_bad = 0
+    for decision, outcomes in decision_outcome_counts.items():
+        if decision == "MATCH":
+            continue
+        for outcome, count in outcomes.items():
+            flagged_total += count
+            if outcome != correct:
+                flagged_bad += count
+
+    precision = match_correct / match_total if match_total else None
+    catch_rate = flagged_bad / flagged_total if flagged_total else None
+    missed = match_total - match_correct
+    return precision, catch_rate, flagged_bad, missed
+
+
+@router.get(
+    "/analytics/calibration",
+    response_model=CalibrationResponse,
+    tags=["Analytics"],
+    summary="Score calibration against reported outcomes",
+)
+async def analytics_calibration(
+    tenant: ReadTenant,
+    db: TenantDbSession,
+    from_ts: datetime | None = None,
+    to_ts: datetime | None = None,
+) -> CalibrationResponse:
+    """How decisions and reliability scores line up with reported outcomes.
+
+    Powered by POST /v1/evaluations/{id}/feedback. Headline metrics:
+    auto-process precision (safety of MATCH), review catch rate (how often a
+    flagged document was actually bad), errors caught vs missed.
+    """
+    start, end = _resolve_range(from_ts, to_ts)
+    window = (Evaluation.created_at >= start, Evaluation.created_at < end)
+
+    total_evaluations = (await db.execute(select(func.count()).where(*window))).scalar_one()
+
+    # Decision × outcome counts over evaluations that have feedback.
+    decision_stmt = (
+        select(Evaluation.decision, EvaluationFeedback.outcome, func.count())
+        .join(EvaluationFeedback, EvaluationFeedback.evaluation_id == Evaluation.id)
+        .where(*window)
+        .group_by(Evaluation.decision, EvaluationFeedback.outcome)
+    )
+    decision_rows = (await db.execute(decision_stmt)).all()
+
+    decision_outcomes: dict[str, dict[str, int]] = {}
+    feedback_count = 0
+    for decision, outcome, count in decision_rows:
+        decision_outcomes.setdefault(_enum_key(decision), {})[_enum_key(outcome)] = count
+        feedback_count += count
+
+    precision, catch_rate, errors_caught, missed_errors = summarize_calibration(decision_outcomes)
+
+    # Outcome accuracy per reliability-score band. width_bucket puts values
+    # equal to the upper bound (1.0) into band N+1 — fold that into band N.
+    band_col = func.width_bucket(Evaluation.reliability_score, 0.0, 1.0, CALIBRATION_BANDS).label(
+        "band"
+    )
+    band_stmt = (
+        select(band_col, EvaluationFeedback.outcome, func.count())
+        .join(EvaluationFeedback, EvaluationFeedback.evaluation_id == Evaluation.id)
+        .where(*window, Evaluation.reliability_score.is_not(None))
+        .group_by(band_col)
+        .group_by(EvaluationFeedback.outcome)
+    )
+    band_rows = (await db.execute(band_stmt)).all()
+
+    band_totals: dict[int, dict[str, int]] = {}
+    for band, outcome, count in band_rows:
+        idx = min(int(band), CALIBRATION_BANDS)
+        band_totals.setdefault(idx, {})[_enum_key(outcome)] = (
+            band_totals.get(idx, {}).get(_enum_key(outcome), 0) + count
+        )
+
+    bands: list[CalibrationBand] = []
+    for idx in sorted(band_totals):
+        outcomes = band_totals[idx]
+        total = sum(outcomes.values())
+        band_correct = outcomes.get(FeedbackOutcome.CORRECT.value, 0)
+        bands.append(
+            CalibrationBand(
+                band_start=round((idx - 1) / CALIBRATION_BANDS, 2),
+                band_end=round(idx / CALIBRATION_BANDS, 2),
+                total=total,
+                correct=band_correct,
+                accuracy=band_correct / total if total else None,
+            )
+        )
+
+    return CalibrationResponse(
+        from_ts=start,
+        to_ts=end,
+        total_evaluations=total_evaluations,
+        feedback_count=feedback_count,
+        feedback_coverage=(feedback_count / total_evaluations) if total_evaluations else None,
+        auto_process_precision=precision,
+        review_catch_rate=catch_rate,
+        errors_caught=errors_caught,
+        missed_errors=missed_errors,
+        decision_outcomes=decision_outcomes,
+        reliability_bands=bands,
+    )

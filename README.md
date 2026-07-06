@@ -162,6 +162,7 @@ uvicorn src.api.main:app --reload
 - [Quickstart Guide](docs/QUICKSTART.md) - 5-minute integration
 - [API Reference](docs/API.md) - Full endpoint docs
 - [Architecture](docs/ARCHITECTURE.md) - System design
+- [Business Model & GTM](docs/GTM.md) - What we sell, to whom, and how
 
 ## Why Metadata-Only?
 

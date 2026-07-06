@@ -143,6 +143,7 @@ make clean      # Stop containers, remove volumes
 | `/health` | GET | No | Health check |
 | `/v1/status` | GET | Yes | Detailed status |
 | `/v1/evaluate` | POST | Yes | Evaluate document metadata |
+| `/v1/evaluations/{id}/feedback` | POST | Yes | Report evaluation outcome |
 | `/v1/templates` | GET | Yes | List templates |
 | `/v1/templates` | POST | Yes | Register template |
 | `/v1/templates/{id}` | GET | Yes | Get template details |
@@ -156,6 +157,7 @@ make clean      # Stop containers, remove volumes
 | `/v1/analytics/summary` | GET | Yes | Aggregate analytics |
 | `/v1/analytics/timeseries` | GET | Yes | Timeseries analytics |
 | `/v1/analytics/extractors` | GET | Yes | Per-vendor analytics |
+| `/v1/analytics/calibration` | GET | Yes | Scores vs reported outcomes |
 
 Authentication: Include `X-API-Key: cp_xxxxx` header.
 

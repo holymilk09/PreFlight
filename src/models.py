@@ -63,6 +63,7 @@ class AuditAction(str, Enum):
     USER_LOGOUT = "user_logout"
     ACCOUNT_LOCKED = "account_locked"
     PASSWORD_CHANGED = "password_changed"
+    FEEDBACK_RECORDED = "feedback_recorded"
     SECURITY_DEGRADED = "security_degraded"
     ALERT_TRIGGERED = "alert_triggered"
     ALERT_RULE_CREATED = "alert_rule_created"
@@ -203,6 +204,40 @@ class Evaluation(SQLModel, table=True):
 
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     processing_time_ms: int | None = SQLField(default=None)
+
+
+class FeedbackOutcome(str, Enum):
+    """Ground-truth outcome reported for an evaluation (metadata only)."""
+
+    CORRECT = "correct"  # Extraction accepted downstream as-is
+    CORRECTED = "corrected"  # Human review had to fix one or more fields
+    REJECTED = "rejected"  # Extraction unusable (wrong doc, unreadable, etc.)
+
+
+class EvaluationFeedback(SQLModel, table=True):
+    """Reported outcome for an evaluation — closes the scoring loop.
+
+    This is how tenants tell us whether a decision turned out right (accepted
+    downstream, corrected in review, or rejected). It calibrates reliability
+    scores against reality and powers the ROI analytics (errors caught vs
+    missed). Metadata only: outcomes and counts, never field values or content.
+    One row per evaluation; resubmission updates it.
+    """
+
+    __tablename__ = "evaluation_feedback"
+    __table_args__ = (Index("ix_feedback_tenant_created", "tenant_id", "created_at"),)
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    evaluation_id: UUID = SQLField(
+        foreign_key="evaluations.id", nullable=False, unique=True, index=True
+    )
+    outcome: FeedbackOutcome = SQLField(nullable=False)
+    field_error_count: int | None = SQLField(default=None)
+    review_seconds: int | None = SQLField(default=None)
+    source: str | None = SQLField(max_length=50, default=None)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime | None = SQLField(default=None)
 
 
 class ExtractorProvider(SQLModel, table=True):
@@ -597,6 +632,75 @@ class UsageResponse(SQLModel):
     enforcement_enabled: bool = Field(
         description="Whether the quota is enforced (429 when exceeded) or metering-only"
     )
+
+
+class FeedbackRequest(SQLModel):
+    """Request body for reporting an evaluation's outcome."""
+
+    outcome: FeedbackOutcome = Field(description="What actually happened downstream")
+    field_error_count: int | None = Field(
+        default=None, ge=0, le=10_000, description="Number of fields a human corrected (count only)"
+    )
+    review_seconds: int | None = Field(
+        default=None, ge=0, le=86_400, description="Human review time spent, in seconds"
+    )
+    source: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Where the outcome came from (e.g. human_review, reconciliation, automated_qa)",
+    )
+
+
+class FeedbackResponse(SQLModel):
+    """Response for recorded evaluation feedback."""
+
+    evaluation_id: UUID
+    outcome: FeedbackOutcome
+    field_error_count: int | None = None
+    review_seconds: int | None = None
+    source: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class CalibrationBand(SQLModel):
+    """Outcome accuracy within one reliability-score band."""
+
+    band_start: float
+    band_end: float
+    total: int = Field(description="Evaluations with feedback in this band")
+    correct: int = Field(description="Of those, how many were correct downstream")
+    accuracy: float | None = Field(default=None, description="correct / total (null if empty)")
+
+
+class CalibrationResponse(SQLModel):
+    """How decisions and reliability scores line up with reported outcomes."""
+
+    from_ts: datetime
+    to_ts: datetime
+    total_evaluations: int
+    feedback_count: int = Field(description="Evaluations in range with reported outcomes")
+    feedback_coverage: float | None = Field(
+        default=None, description="feedback_count / total_evaluations (null if no evaluations)"
+    )
+    auto_process_precision: float | None = Field(
+        default=None,
+        description="Of MATCH decisions with feedback, fraction that were correct downstream",
+    )
+    review_catch_rate: float | None = Field(
+        default=None,
+        description="Of flagged (non-MATCH) decisions with feedback, fraction that were actually bad",
+    )
+    errors_caught: int = Field(
+        description="Flagged evaluations confirmed bad — errors kept out of downstream systems"
+    )
+    missed_errors: int = Field(
+        description="MATCH (auto-process) evaluations that turned out corrected/rejected"
+    )
+    decision_outcomes: dict[str, dict[str, int]] = Field(
+        default_factory=dict, description="Counts by decision then outcome"
+    )
+    reliability_bands: list[CalibrationBand] = Field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------

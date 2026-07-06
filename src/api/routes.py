@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import time
+from datetime import datetime
 from uuid import UUID
 
 import structlog
@@ -40,9 +41,12 @@ from src.models import (
     EvaluateRequest,
     EvaluateResponse,
     Evaluation,
+    EvaluationFeedback,
     EvaluationListResponse,
     EvaluationRecord,
     ExtractorProvider,
+    FeedbackRequest,
+    FeedbackResponse,
     ServiceStatus,
     Template,
     TemplateCreate,
@@ -540,6 +544,85 @@ async def get_evaluation(
             template_version_id = f"{template.template_id}:{template.version}"
 
     return evaluation_to_record(evaluation, template_version_id)
+
+
+@router.post(
+    "/evaluations/{evaluation_id}/feedback",
+    response_model=FeedbackResponse,
+    tags=["Evaluations"],
+    summary="Report the downstream outcome of an evaluation",
+)
+async def submit_feedback(
+    request: Request,
+    evaluation_id: UUID,
+    body: FeedbackRequest,
+    tenant: EvaluateTenant,
+    db: TenantDbSession,
+) -> FeedbackResponse:
+    """Close the loop: report what actually happened to an evaluated document.
+
+    Outcomes (correct / corrected / rejected — metadata only, never content)
+    calibrate reliability scores against reality and power the ROI analytics
+    at /v1/analytics/calibration. One feedback record per evaluation;
+    resubmitting updates it. RLS scopes the evaluation lookup to the tenant.
+    """
+    evaluation = (
+        await db.execute(select(Evaluation).where(Evaluation.id == evaluation_id))
+    ).scalar_one_or_none()
+    if not evaluation:
+        raise EVALUATION_NOT_FOUND
+
+    existing = (
+        await db.execute(
+            select(EvaluationFeedback).where(EvaluationFeedback.evaluation_id == evaluation_id)
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        existing.outcome = body.outcome
+        existing.field_error_count = body.field_error_count
+        existing.review_seconds = body.review_seconds
+        existing.source = body.source
+        existing.updated_at = datetime.utcnow()
+        feedback = existing
+    else:
+        feedback = EvaluationFeedback(
+            tenant_id=tenant.tenant_id,
+            evaluation_id=evaluation_id,
+            outcome=body.outcome,
+            field_error_count=body.field_error_count,
+            review_seconds=body.review_seconds,
+            source=body.source,
+        )
+        db.add(feedback)
+
+    await db.commit()
+
+    await log_audit_event(
+        action=AuditAction.FEEDBACK_RECORDED,
+        tenant_id=tenant.tenant_id,
+        actor_id=tenant.api_key_id,
+        resource_type="evaluation",
+        resource_id=evaluation_id,
+        details={
+            "outcome": body.outcome.value,
+            "decision": evaluation.decision.value
+            if hasattr(evaluation.decision, "value")
+            else str(evaluation.decision),
+            "updated": existing is not None,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return FeedbackResponse(
+        evaluation_id=evaluation_id,
+        outcome=feedback.outcome,
+        field_error_count=feedback.field_error_count,
+        review_seconds=feedback.review_seconds,
+        source=feedback.source,
+        created_at=feedback.created_at,
+        updated_at=feedback.updated_at,
+    )
 
 
 # -----------------------------------------------------------------------------
