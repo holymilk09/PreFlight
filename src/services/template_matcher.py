@@ -49,6 +49,12 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     """Compute cosine similarity between two vectors.
 
     Returns a value between 0 (orthogonal) and 1 (identical).
+
+    NOTE: no longer the production matching metric. On the ground-truth
+    harness (tests/validation/test_decision_quality.py) cosine over these
+    all-non-negative feature vectors is nearly degenerate: a never-registered
+    document's best similarity against the pool averaged 0.995, making
+    novelty detection a coin flip. Kept as a utility for analysis/tests.
     """
     if len(vec_a) != len(vec_b):
         return 0.0
@@ -61,6 +67,49 @@ def _cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
         return 0.0
 
     return dot_product / (magnitude_a * magnitude_b)
+
+
+def _feature_similarity(vec_a: list[float], vec_b: list[float]) -> float:
+    """Gower-style similarity: 1 - mean absolute difference over [0,1] dims.
+
+    Production matching metric. Chosen over cosine on the ground-truth
+    harness (tests/validation/test_decision_quality.py, seed=1337): higher
+    top-1 template identification at every perturbation level, higher
+    same-vs-different AUC, and 77% vs 55% balanced accuracy at the optimal
+    MATCH boundary. Unlike cosine it is sensitive to magnitude differences,
+    which is what actually distinguishes templates in this feature space.
+    """
+    if len(vec_a) != len(vec_b) or not vec_a:
+        return 0.0
+    return 1.0 - sum(abs(a - b) for a, b in zip(vec_a, vec_b, strict=False)) / len(vec_a)
+
+
+# Calibration anchors measured on the ground-truth harness (seed=1337):
+# raw similarities compress into ~[0.88, 1.0], so the documented decision
+# thresholds (MATCH >= 0.85, NEW < 0.50) never fired — heavily redesigned and
+# even never-registered documents auto-matched. The piecewise-linear remap
+# below anchors the *measured* parent-vs-impostor boundary (raw 0.98) to
+# confidence 0.85 and the "no plausibly-same layout" region (raw 0.90) to
+# confidence 0.50, making the documented threshold semantics true.
+_RAW_MATCH_ANCHOR = 0.98  # raw similarity at the empirical MATCH boundary
+_RAW_NEW_ANCHOR = 0.90  # raw similarity at the empirical REVIEW/NEW boundary
+_RAW_FLOOR = 0.60  # raw similarity mapping to confidence 0.0
+
+
+def _calibrate_confidence(raw: float) -> float:
+    """Map raw feature similarity onto the documented confidence scale."""
+    if raw >= _RAW_MATCH_ANCHOR:
+        conf = 0.85 + 0.15 * (raw - _RAW_MATCH_ANCHOR) / (1.0 - _RAW_MATCH_ANCHOR)
+    elif raw >= _RAW_NEW_ANCHOR:
+        conf = 0.50 + 0.35 * (raw - _RAW_NEW_ANCHOR) / (_RAW_MATCH_ANCHOR - _RAW_NEW_ANCHOR)
+    else:
+        conf = 0.50 * (raw - _RAW_FLOOR) / (_RAW_NEW_ANCHOR - _RAW_FLOOR)
+    return max(0.0, min(1.0, conf))
+
+
+def _match_confidence(vec_a: list[float], vec_b: list[float]) -> float:
+    """Calibrated matching confidence between two feature vectors."""
+    return _calibrate_confidence(_feature_similarity(vec_a, vec_b))
 
 
 async def match_template(
@@ -174,7 +223,7 @@ async def _match_with_lsh(
                 continue
 
             template_vector = _extract_feature_vector(template_features)
-            similarity = _cosine_similarity(input_vector, template_vector)
+            similarity = _match_confidence(input_vector, template_vector)
 
             if similarity > best_similarity:
                 best_similarity = similarity
@@ -233,8 +282,8 @@ async def _match_with_scan(
 
         template_vector = _extract_feature_vector(template_features)
 
-        # Compute similarity
-        similarity = _cosine_similarity(input_vector, template_vector)
+        # Compute calibrated matching confidence
+        similarity = _match_confidence(input_vector, template_vector)
 
         if similarity > best_similarity:
             best_similarity = similarity

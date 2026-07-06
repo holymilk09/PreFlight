@@ -154,6 +154,9 @@ addopts = [
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
+markers = [
+    "validation: dataset-driven validation tests (excluded from `make test`; run via `make test-validation`)",
+]
 
 # Coverage configuration
 [tool.coverage.run]
