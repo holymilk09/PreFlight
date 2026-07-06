@@ -1,4 +1,4 @@
-.PHONY: setup install dev test lint format migrate worker up down logs clean help check-env
+.PHONY: setup install dev test lint format migrate up down logs clean help check-env
 
 # Default target
 .DEFAULT_GOAL := help
@@ -37,16 +37,12 @@ install:
 ## up: Start Docker infrastructure
 up: check-env
 	@echo "$(BLUE)Starting infrastructure...$(RESET)"
-	@mkdir -p temporal-config
-	@echo "system.forceSearchAttributesCacheRefreshOnRead:" > temporal-config/development.yaml
-	@echo "  - value: true" >> temporal-config/development.yaml
 	docker compose up -d
 	@echo "$(GREEN)Infrastructure started. Waiting for services to be healthy...$(RESET)"
 	@sleep 5
 	@echo "$(GREEN)Services ready (localhost only):$(RESET)"
 	@echo "  - PostgreSQL: 127.0.0.1:5432"
 	@echo "  - Redis:      127.0.0.1:6379"
-	@echo "  - Temporal:   127.0.0.1:7233"
 
 ## down: Stop Docker infrastructure
 down:
@@ -112,7 +108,6 @@ logs:
 clean:
 	@echo "$(YELLOW)Stopping containers and removing volumes...$(RESET)"
 	docker compose down -v
-	rm -rf temporal-config/
 	@echo "$(GREEN)Cleanup complete.$(RESET)"
 
 ## shell: Open Python shell with app context

@@ -1,5 +1,5 @@
-# Simplified Docker Compose for local development
-# Removes Temporal for simpler setup - use this for quick start
+# Docker Compose for local development (same services as docker-compose.yml,
+# with host ports bound to localhost)
 #
 # Usage:
 #   cp .env.example .env

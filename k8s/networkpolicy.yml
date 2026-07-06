@@ -76,14 +76,6 @@ spec:
         - protocol: TCP
           port: 6379
 
-    # Allow Temporal (adjust namespace/labels as needed)
-    - to:
-        - podSelector:
-            matchLabels:
-              app: temporal
-      ports:
-        - protocol: TCP
-          port: 7233
 
 ---
 # Default deny policy for the namespace

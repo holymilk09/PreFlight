@@ -46,10 +46,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    # Temporal
-    temporal_host: str = Field(default="localhost:7233")
-    temporal_namespace: str = Field(default="controlplane")
-
     # Authentication
     jwt_secret: str = Field(..., description="JWT signing secret (min 32 chars)")
     jwt_algorithm: str = Field(default="HS256")

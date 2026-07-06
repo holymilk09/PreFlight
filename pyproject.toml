@@ -25,8 +25,6 @@ dependencies = [
     # Redis
     "redis>=5.0.0",
 
-    # Temporal
-    "temporalio>=1.4.0",
 
     # HTTP Client
     "httpx>=0.26.0",
@@ -125,13 +123,12 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
-    "temporalio.*",
     "redis.*",
     "uuid_extensions.*",
 ]
 ignore_missing_imports = true
 
-# SQLAlchemy, Redis, and Temporal modules have poor type stubs
+# SQLAlchemy and Redis modules have poor type stubs
 [[tool.mypy.overrides]]
 module = [
     "src.api.*",

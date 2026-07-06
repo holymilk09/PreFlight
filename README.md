@@ -134,7 +134,7 @@ cd preflight
 cp .env.example .env
 # Edit .env with secrets: openssl rand -hex 32
 
-# Start infrastructure (simplified, no Temporal)
+# Start infrastructure
 docker compose -f docker-compose.simple.yml up -d
 
 # Install and run

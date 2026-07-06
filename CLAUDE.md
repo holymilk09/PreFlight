@@ -60,10 +60,9 @@ control-plane/
 
 ## Technology Stack (MVP)
 
-### Infrastructure (3 Services)
+### Infrastructure (2 Services)
 - **PostgreSQL 16**: Event store with Row-Level Security (multi-tenant)
 - **Redis 7**: Cache, rate limiting, session state
-- **Temporal**: Workflow orchestration (durable execution)
 
 ### Application
 - **FastAPI**: Async API with automatic OpenAPI
