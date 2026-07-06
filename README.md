@@ -158,6 +158,7 @@ uvicorn src.api.main:app --reload
 - [API Reference](docs/API.md) - Full endpoint docs
 - [Architecture](docs/ARCHITECTURE.md) - System design
 - [Business Model & GTM](docs/GTM.md) - What we sell, to whom, and how
+- [Scorecard](docs/SCORECARD.md) - Measured algorithm quality, honest limits
 
 ## Why Metadata-Only?
 
