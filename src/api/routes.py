@@ -59,6 +59,7 @@ from src.models import (
 )
 from src.services import usage as usage_service
 from src.services.alerting import dispatch_webhooks, evaluate_alerts
+from src.services.baseline import update_baseline
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
 from src.services.rate_limiter import get_redis_client
@@ -307,6 +308,17 @@ async def evaluate(
             reliability_score=reliability_score,
         )
         template_version_id = f"{matched_template.template_id}:{matched_template.version}"
+
+        # Rolling baseline: blend healthy, confident MATCHes into the template
+        # baseline (EWMA) so gradual legitimate evolution doesn't accumulate
+        # into permanent drift false alarms. Gated inside update_baseline:
+        # only MATCH-confidence, green-drift evaluations qualify, and identity
+        # fields (tables/pages/columns/header/footer) are never blended.
+        # Commits atomically with the evaluation below.
+        if decision == Decision.MATCH and update_baseline(
+            matched_template, body.structural_features, match_confidence, drift_score
+        ):
+            db.add(matched_template)
 
     # Generate evaluation ID and replay hash
     evaluation_id = uuid7()
