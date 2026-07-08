@@ -1,27 +1,47 @@
 # PreFlight Scorecard
 
-*Unbiased self-assessment, July 2026. Every algorithm claim below is backed by
-the ground-truth harness (`tests/validation/test_decision_quality.py`,
-seed 1337, 30 templates x 6 categories, 1200 perturbed trials + 60 novel
-documents; report: `decision_quality_report.json`). Real datasets
-(FUNSD/SROIE) are wired but were network-blocked in this environment; the
-harness is deliberately adversarial instead: perturbation model and pass
-criteria were fixed before results were observed.*
+*Unbiased self-assessment, July 2026 (updated after the spatial-features
+pass). Every algorithm claim below is backed by the ground-truth harness
+(`tests/validation/test_decision_quality.py`, seed 1337, 30 templates x 6
+categories, 1200 perturbed trials + 60 novel documents; report:
+`decision_quality_report.json`; weight/anchor derivation with held-out seeds:
+`docs/calibration_derivation.json`). Real datasets (FUNSD/SROIE) are wired
+but network-blocked in this environment; the harness is deliberately
+adversarial instead: perturbation models and pass criteria were fixed before
+results were observed, weights were selected on one seed and accepted only
+after beating the scalar metric on every held-out seed.*
 
 ## Ratings
 
 | Dimension | Score | Evidence |
 |---|---|---|
 | Drift detection | **8/10** | Monotone response to perturbation (0.07 → 0.20 → 0.33 → 0.41), crosses the 0.30 review threshold at the 30%-revision level — thresholds genuinely calibrated. Rolling EWMA baselines now prevent the gradual-evolution false alarm (simulation: static baseline ends ≥ 0.30 permanent alarm, rolling stays < 0.15). |
-| Template matching (after fix) | **7/10** | Was 2/10: cosine over the all-positive feature vector let 90% of heavily-redesigned docs auto-MATCH and made novelty detection a coin flip (novel best-sim 0.995). Now L1-Gower + measured calibration: 97% top-1 at low perturbation, redesign auto-MATCH 90% → 3%, novel docs land in REVIEW not MATCH. Remaining honest limit: top-1 falls to 72% at 15% perturbation among same-category siblings — 10 coarse features can't fully separate two structurally similar invoices. |
-| Novelty (NEW) detection | **5/10** | Known-vs-novel balanced accuracy only 59.7% even with the better metric. Calibration makes the failure mode safe (novel → REVIEW, mean confidence 0.834 < 0.85) but not smart. Needs richer features (spatial-histogram of boxes) or tenant feedback data. |
-| Reliability scoring | **4/10 (unvalidated)** | It is a weighted blend of template baseline + vendor confidence + drift penalty. Mathematically sane, but no ground truth says it predicts extraction errors. The feedback loop + `/v1/analytics/calibration` exist precisely to validate or kill it with customer data. Do not sell accuracy claims until a design partner's calibration report supports them. |
+| Template matching (after 2 fix passes) | **8/10** | Was 2/10 (cosine: 90% of redesigns auto-MATCHed, novelty a coin flip). Pass 1: L1-Gower + measured calibration. Pass 2: 3x3 spatial occupancy grid from the bounding boxes (previously unused by matching), blended 0.3/0.7, weight chosen on seed 1337 and accepted on held-out seeds 2024/4242/9001 + an alternate pool. Top-1 identification @15% perturbation 72.7% → **88.7%**, @30% 44.3% → **68.7%**; balanced accuracy at the MATCH boundary 75.6% → **82.4%**; OCR-jitter docs still auto-MATCH at 97%. Legacy templates without boxes keep the scalar path (no silent degradation). |
+| Novelty (NEW) detection | **6/10** | Improved by the spatial signal: known-vs-novel balanced accuracy 59.7% → **64.3%** (held-out 61-64%), novel docs' mean confidence 0.707 — solidly REVIEW, far from auto-match. **The pre-registered 0.70 target was NOT met**; the harness floor is consciously set at 0.60. Still the weakest signal: the measured known-vs-novel threshold sat above the MATCH threshold (overlapping populations), so the NEW anchor uses a documented mechanical fallback. Real progress here likely needs tenant feedback data, not more geometry. |
+| Reliability scoring | **6/10 (self-calibrating, unvalidated)** | The formula is unchanged (baseline 40% + vendor confidence 35% + drift 25%), but `baseline_reliability` is no longer frozen at its registration value: feedback outcomes now move it by EWMA (anti-ratchet: replayed feedback is a no-op), so scores converge on each template's real-world accuracy as feedback accumulates. Still zero external validation — `/v1/analytics/calibration` remains the proof mechanism and kill-criterion. No accuracy claims until a design partner's report supports them. |
 | Security/compliance posture | **9/10** | API-key scopes, tenant RLS, fail-closed Redis posture, append-only audit trail (DB trigger), login lockout, webhook secrets encrypted at rest, quota metering. This is the sellable compliance artifact. |
-| Operability | **8/10** | 2 infrastructure services (Postgres, Redis — dead Temporal stack removed), one-click Render blueprint with migrations, SDK with 3 vendor adapters whose outputs are validated against the server's own schema, fingerprint byte-parity tested. |
+| Operability | **8/10** | 2 infrastructure services (Postgres, Redis — dead Temporal stack removed), one-click Render blueprint with migrations, SDK with 3 vendor adapters whose outputs are validated against the server's own schema, fingerprint byte-parity tested. LSH candidate index now actually populated by the template lifecycle (was dormant — never called); REJECT decision now reachable (safeguard ERRORs previously computed then ignored). |
 | Test depth | **8/10** | 449 unit/service tests + 7 validation + integration suites in CI; the validation harness scores the algorithms rather than just exercising them. |
 | Product-market proof | **2/10** | Zero external users. Everything above is necessary, none of it is sufficient. The only next milestone that matters: 2–3 design partners running real metadata, and their calibration reports. |
 
-## What changed in this pass (before → after)
+## What changed in the spatial pass (harness production row, report B → C)
+
+| Metric | Before (scalar) | After (blended) |
+|---|---|---|
+| Top-1 identification @15% perturbation | 72.7% | **88.7%** |
+| Top-1 @30% | 44.3% | **68.7%** |
+| Balanced accuracy at MATCH boundary | 75.6% | **82.4%** |
+| Known-vs-novel balanced accuracy | 60.5% | **64.3%** (target 0.70 missed — documented) |
+| Novel docs' mean confidence | 0.832 | 0.707 (deeper into REVIEW) |
+| OCR-jitter (5%) MATCH rate | 96% | 97% |
+
+Also in this pass: reliability self-calibration from feedback (EWMA on
+`baseline_reliability`, anti-ratchet), REJECT wired to safeguard ERRORs
+(garbage extractions no longer scored or matched), LSH index wired to the
+template lifecycle, deterministic per-sample synthetic generation + an
+a-priori box perturbation model in the harness.
+
+## What changed in the first pass (before → after)
 
 | Metric (harness, production path) | Before | After |
 |---|---|---|
