@@ -46,6 +46,58 @@ VARIANTS_PER_TEMPLATE = 10
 REPORT_PATH = "decision_quality_report.json"
 
 
+def _perturb_boxes(boxes: list, level: float, rng: random.Random) -> list:
+    """Perturb bounding boxes by a controlled magnitude (defined a priori).
+
+    Fixed BEFORE any spatial-metric result was observed (same discipline as
+    the scalar model): position jitter gauss(0, level/2); size jitter
+    *(1 + gauss(0, level/2)); each box dropped with prob level/2; a new box
+    (type sampled from the document's existing mix, uniform position) added
+    with prob level/2 per original box. At 0.05 this is OCR noise; at 0.50
+    roughly a quarter of boxes vanish and a quarter are new — a redesign.
+    """
+    from src.models import BoundingBox
+
+    type_mix = [b.element_type for b in boxes] or ["text"]
+    out = []
+    for box in boxes:
+        if rng.random() < level / 2:
+            continue  # dropped
+        width = min(1.0, max(0.01, box.width * (1.0 + rng.gauss(0.0, level / 2))))
+        height = min(1.0, max(0.01, box.height * (1.0 + rng.gauss(0.0, level / 2))))
+        x = min(1.0 - width, max(0.0, box.x + rng.gauss(0.0, level / 2)))
+        y = min(1.0 - height, max(0.0, box.y + rng.gauss(0.0, level / 2)))
+        out.append(
+            BoundingBox(
+                x=x,
+                y=y,
+                width=width,
+                height=height,
+                element_type=box.element_type,
+                confidence=box.confidence,
+                reading_order=0,
+            )
+        )
+    for _ in boxes:
+        if rng.random() < level / 2:
+            width = rng.uniform(0.05, 0.4)
+            height = rng.uniform(0.02, 0.2)
+            out.append(
+                BoundingBox(
+                    x=rng.uniform(0.0, 1.0 - width),
+                    y=rng.uniform(0.0, 1.0 - height),
+                    width=width,
+                    height=height,
+                    element_type=rng.choice(type_mix),
+                    confidence=rng.uniform(0.85, 0.99),
+                    reading_order=0,
+                )
+            )
+    for i, box in enumerate(out):
+        box.reading_order = i
+    return out
+
+
 def perturb(features: StructuralFeatures, level: float, rng: random.Random) -> StructuralFeatures:
     """Perturb features by a controlled magnitude (defined a priori)."""
 
@@ -78,7 +130,7 @@ def perturb(features: StructuralFeatures, level: float, rng: random.Random) -> S
         column_count=column_count,
         has_header=(not features.has_header) if rng.random() < level / 2 else features.has_header,
         has_footer=(not features.has_footer) if rng.random() < level / 2 else features.has_footer,
-        bounding_boxes=[],
+        bounding_boxes=_perturb_boxes(features.bounding_boxes, level, rng),
     )
 
 

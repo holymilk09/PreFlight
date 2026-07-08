@@ -6,68 +6,68 @@
     "cosine": {
       "levels": {
         "0.05": {
-          "top1_accuracy": 0.95,
-          "mean_parent_similarity": 0.9871818016387609,
-          "mean_best_other_similarity": 0.9880802139982541,
-          "auc": 0.9441444444444445,
-          "mean_drift": 0.07319544109888465,
+          "top1_accuracy": 0.9366666666666666,
+          "mean_parent_similarity": 0.9837231377440098,
+          "mean_best_other_similarity": 0.9792753641467383,
+          "auc": 0.9276444444444445,
+          "mean_drift": 0.07289168817247617,
           "decision_mix": {
-            "MATCH": 0.98,
-            "REVIEW": 0.02,
+            "MATCH": 1.0,
+            "REVIEW": 0.0,
             "NEW": 0.0
           }
         },
         "0.15": {
-          "top1_accuracy": 0.62,
-          "mean_parent_similarity": 0.9572623037737399,
-          "mean_best_other_similarity": 0.9744907100759443,
-          "auc": 0.5997444444444444,
-          "mean_drift": 0.20273668597211936,
+          "top1_accuracy": 0.67,
+          "mean_parent_similarity": 0.9544268679092107,
+          "mean_best_other_similarity": 0.9777181316429395,
+          "auc": 0.6188666666666667,
+          "mean_drift": 0.20743682515301765,
+          "decision_mix": {
+            "MATCH": 1.0,
+            "REVIEW": 0.0,
+            "NEW": 0.0
+          }
+        },
+        "0.3": {
+          "top1_accuracy": 0.35,
+          "mean_parent_similarity": 0.9119821154348284,
+          "mean_best_other_similarity": 0.9671882248816291,
+          "auc": 0.3742333333333333,
+          "mean_drift": 0.3273741768940828,
+          "decision_mix": {
+            "MATCH": 0.9866666666666667,
+            "REVIEW": 0.013333333333333334,
+            "NEW": 0.0
+          }
+        },
+        "0.5": {
+          "top1_accuracy": 0.21,
+          "mean_parent_similarity": 0.8236653215122549,
+          "mean_best_other_similarity": 0.944315077426304,
+          "auc": 0.2711777777777778,
+          "mean_drift": 0.41584349830748607,
           "decision_mix": {
             "MATCH": 0.95,
             "REVIEW": 0.05,
             "NEW": 0.0
           }
-        },
-        "0.3": {
-          "top1_accuracy": 0.26,
-          "mean_parent_similarity": 0.9095590306551873,
-          "mean_best_other_similarity": 0.9665187931360579,
-          "auc": 0.34821111111111114,
-          "mean_drift": 0.3247461082870876,
-          "decision_mix": {
-            "MATCH": 0.9466666666666667,
-            "REVIEW": 0.05333333333333334,
-            "NEW": 0.0
-          }
-        },
-        "0.5": {
-          "top1_accuracy": 0.15,
-          "mean_parent_similarity": 0.8358938399397694,
-          "mean_best_other_similarity": 0.9329075595083104,
-          "auc": 0.30545555555555554,
-          "mean_drift": 0.4047291368642549,
-          "decision_mix": {
-            "MATCH": 0.8966666666666666,
-            "REVIEW": 0.09666666666666666,
-            "NEW": 0.006666666666666667
-          }
         }
       },
       "empirical_match_threshold": 0.99,
-      "balanced_accuracy_at_match_threshold": 0.5475,
+      "balanced_accuracy_at_match_threshold": 0.6016666666666667,
       "empirical_new_threshold": 0.0,
       "balanced_accuracy_at_new_threshold": 0.5,
-      "novel_best_similarity_mean": 0.9947704318676185
+      "novel_best_similarity_mean": 0.9937645326795886
     },
     "l1_gower": {
       "levels": {
         "0.05": {
-          "top1_accuracy": 0.97,
-          "mean_parent_similarity": 0.9889768793765671,
-          "mean_best_other_similarity": 0.9707502568089225,
-          "auc": 0.9515666666666667,
-          "mean_drift": 0.07319544109888465,
+          "top1_accuracy": 0.9333333333333333,
+          "mean_parent_similarity": 0.9874885815481824,
+          "mean_best_other_similarity": 0.9641036708044447,
+          "auc": 0.9394555555555556,
+          "mean_drift": 0.07289168817247617,
           "decision_mix": {
             "MATCH": 1.0,
             "REVIEW": 0.0,
@@ -75,11 +75,11 @@
           }
         },
         "0.15": {
-          "top1_accuracy": 0.72,
-          "mean_parent_similarity": 0.9653800747094023,
-          "mean_best_other_similarity": 0.9624668022729751,
-          "auc": 0.6817111111111112,
-          "mean_drift": 0.20273668597211936,
+          "top1_accuracy": 0.7266666666666667,
+          "mean_parent_similarity": 0.962552211488174,
+          "mean_best_other_similarity": 0.9604951033389661,
+          "auc": 0.6839,
+          "mean_drift": 0.20743682515301765,
           "decision_mix": {
             "MATCH": 1.0,
             "REVIEW": 0.0,
@@ -87,92 +87,92 @@
           }
         },
         "0.3": {
-          "top1_accuracy": 0.3466666666666667,
-          "mean_parent_similarity": 0.9273622476410505,
-          "mean_best_other_similarity": 0.9512617191197419,
-          "auc": 0.3803666666666667,
-          "mean_drift": 0.3247461082870876,
+          "top1_accuracy": 0.44333333333333336,
+          "mean_parent_similarity": 0.931716989920348,
+          "mean_best_other_similarity": 0.9500347839878693,
+          "auc": 0.41454444444444444,
+          "mean_drift": 0.3273741768940828,
           "decision_mix": {
-            "MATCH": 0.9966666666666667,
-            "REVIEW": 0.0033333333333333335,
+            "MATCH": 1.0,
+            "REVIEW": 0.0,
             "NEW": 0.0
           }
         },
         "0.5": {
-          "top1_accuracy": 0.20666666666666667,
-          "mean_parent_similarity": 0.883100064897284,
-          "mean_best_other_similarity": 0.9277232101589046,
-          "auc": 0.3159777777777778,
-          "mean_drift": 0.4047291368642549,
+          "top1_accuracy": 0.25,
+          "mean_parent_similarity": 0.8814283478731729,
+          "mean_best_other_similarity": 0.9332437566896917,
+          "auc": 0.2707222222222222,
+          "mean_drift": 0.41584349830748607,
           "decision_mix": {
-            "MATCH": 0.9333333333333333,
-            "REVIEW": 0.06666666666666667,
+            "MATCH": 0.9866666666666667,
+            "REVIEW": 0.013333333333333334,
             "NEW": 0.0
           }
         }
       },
       "empirical_match_threshold": 0.98,
-      "balanced_accuracy_at_match_threshold": 0.7708333333333333,
+      "balanced_accuracy_at_match_threshold": 0.7508333333333334,
       "empirical_new_threshold": 0.99,
-      "balanced_accuracy_at_new_threshold": 0.5970833333333333,
-      "novel_best_similarity_mean": 0.9750440469625263
+      "balanced_accuracy_at_new_threshold": 0.5841666666666667,
+      "novel_best_similarity_mean": 0.9746622353157911
     },
     "production": {
       "levels": {
         "0.05": {
-          "top1_accuracy": 0.97,
-          "mean_parent_similarity": 0.9301137776995455,
-          "mean_best_other_similarity": 0.8141781864426163,
-          "auc": 0.9515666666666667,
-          "mean_drift": 0.07319544109888465,
+          "top1_accuracy": 0.9333333333333333,
+          "mean_parent_similarity": 0.9245057581709346,
+          "mean_best_other_similarity": 0.7858438755870806,
+          "auc": 0.9394555555555556,
+          "mean_drift": 0.07289168817247617,
           "decision_mix": {
-            "MATCH": 0.96,
-            "REVIEW": 0.02,
-            "NEW": 0.02
+            "MATCH": 0.9566666666666667,
+            "REVIEW": 0.03666666666666667,
+            "NEW": 0.006666666666666667
           }
         },
         "0.15": {
-          "top1_accuracy": 0.72,
-          "mean_parent_similarity": 0.8031373051165405,
-          "mean_best_other_similarity": 0.7797764619435352,
-          "auc": 0.6817111111111112,
-          "mean_drift": 0.20273668597211936,
+          "top1_accuracy": 0.7266666666666667,
+          "mean_parent_similarity": 0.7905254182110502,
+          "mean_best_other_similarity": 0.7682772296618985,
+          "auc": 0.6839,
+          "mean_drift": 0.20743682515301765,
           "decision_mix": {
-            "MATCH": 0.53,
-            "REVIEW": 0.4166666666666667,
-            "NEW": 0.05333333333333334
+            "MATCH": 0.49333333333333335,
+            "REVIEW": 0.5,
+            "NEW": 0.006666666666666667
           }
         },
         "0.3": {
-          "top1_accuracy": 0.3466666666666667,
-          "mean_parent_similarity": 0.659385954445634,
-          "mean_best_other_similarity": 0.731447272496491,
-          "auc": 0.3803666666666667,
-          "mean_drift": 0.3247461082870876,
+          "top1_accuracy": 0.44333333333333336,
+          "mean_parent_similarity": 0.6695793508706577,
+          "mean_best_other_similarity": 0.7240294960976484,
+          "auc": 0.41454444444444444,
+          "mean_drift": 0.3273741768940828,
           "decision_mix": {
-            "MATCH": 0.13333333333333333,
-            "REVIEW": 0.8,
-            "NEW": 0.06666666666666667
+            "MATCH": 0.10333333333333333,
+            "REVIEW": 0.8733333333333333,
+            "NEW": 0.023333333333333334
           }
         },
         "0.5": {
-          "top1_accuracy": 0.20666666666666667,
-          "mean_parent_similarity": 0.531413905002141,
-          "mean_best_other_similarity": 0.6431240047480913,
-          "auc": 0.3159777777777778,
-          "mean_drift": 0.4047291368642549,
+          "top1_accuracy": 0.25,
+          "mean_parent_similarity": 0.5226233910625878,
+          "mean_best_other_similarity": 0.6567835271034012,
+          "auc": 0.2707222222222222,
+          "mean_drift": 0.41584349830748607,
           "decision_mix": {
             "MATCH": 0.03333333333333333,
-            "REVIEW": 0.7633333333333333,
-            "NEW": 0.20333333333333334
+            "REVIEW": 0.8633333333333333,
+            "NEW": 0.10333333333333333
           }
         }
       },
-      "empirical_match_threshold": 0.85,
-      "balanced_accuracy_at_match_threshold": 0.7708333333333333,
+      "empirical_match_threshold": 0.87,
+      "balanced_accuracy_at_match_threshold": 0.7558333333333334,
       "empirical_new_threshold": 0.93,
-      "balanced_accuracy_at_new_threshold": 0.5966666666666667,
-      "novel_best_similarity_mean": 0.8343270753512052
+      "balanced_accuracy_at_new_threshold": 0.6045833333333333,
+      "novel_best_similarity_mean": 0.832445531465144
     }
   }
 }

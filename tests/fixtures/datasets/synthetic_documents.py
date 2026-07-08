@@ -10,6 +10,7 @@ This allows testing of:
 - Feature extraction for complex layouts (tables, figures, multi-column)
 """
 
+import hashlib
 import random
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -124,7 +125,20 @@ class SyntheticDocumentGenerator:
 
     def __init__(self, seed: int | None = 42):
         """Initialize generator with optional seed for reproducibility."""
+        self.seed = seed
         self.rng = random.Random(seed)
+
+    def _sample_rng(self, doc_type: str, index: int) -> random.Random:
+        """Independent, deterministic RNG per sample.
+
+        Each template's features AND bounding boxes are reproducible in
+        isolation — not coupled to generation order via a shared stream (the
+        old behavior made box-level comparisons in validation harnesses
+        impossible). sha256 keeps the derivation stable across processes
+        (tuple hashing would depend on PYTHONHASHSEED).
+        """
+        digest = hashlib.sha256(f"{self.seed}:{doc_type}:{index}".encode()).digest()
+        return random.Random(int.from_bytes(digest[:8], "big"))
 
     def generate(self, doc_type: str, count: int = 100) -> Iterator[DocumentSample]:
         """Generate synthetic samples for a specific document type.
@@ -142,7 +156,7 @@ class SyntheticDocumentGenerator:
         profile = DOCUMENT_PROFILES[doc_type]
 
         for i in range(count):
-            features = self._generate_features(profile)
+            features = self._generate_features(profile, rng=self._sample_rng(doc_type, i))
 
             yield DocumentSample(
                 id=f"synthetic_{doc_type}_{i:04d}",
@@ -152,7 +166,7 @@ class SyntheticDocumentGenerator:
                 metadata={
                     "profile": doc_type,
                     "index": i,
-                    "generator_version": "1.0",
+                    "generator_version": "2.0",
                 },
             )
 
@@ -176,28 +190,31 @@ class SyntheticDocumentGenerator:
         for doc_type in types:
             yield from self.generate(doc_type, per_type)
 
-    def _generate_features(self, profile: DocumentTypeProfile) -> StructuralFeatures:
+    def _generate_features(
+        self, profile: DocumentTypeProfile, rng: random.Random | None = None
+    ) -> StructuralFeatures:
         """Generate StructuralFeatures based on document profile."""
+        rng = rng or self.rng
 
         # Generate counts
-        element_count = self.rng.randint(*profile.element_range)
-        table_count = self.rng.randint(*profile.table_range)
-        image_count = self.rng.randint(*profile.image_range)
+        element_count = rng.randint(*profile.element_range)
+        table_count = rng.randint(*profile.table_range)
+        image_count = rng.randint(*profile.image_range)
 
         # Text blocks = elements - tables - images (roughly)
         text_block_count = max(1, element_count - table_count - image_count)
 
         # Layout
-        column_count = self.rng.randint(*profile.column_range)
-        text_density = self.rng.uniform(*profile.text_density_range)
-        complexity = self.rng.uniform(*profile.complexity_range)
+        column_count = rng.randint(*profile.column_range)
+        text_density = rng.uniform(*profile.text_density_range)
+        complexity = rng.uniform(*profile.complexity_range)
 
         # Structure
-        has_header = self.rng.random() < profile.has_header_prob
-        has_footer = self.rng.random() < profile.has_footer_prob
+        has_header = rng.random() < profile.has_header_prob
+        has_footer = rng.random() < profile.has_footer_prob
 
         # Generate bounding boxes
-        bboxes = self._generate_bboxes(element_count, table_count, image_count, column_count)
+        bboxes = self._generate_bboxes(element_count, table_count, image_count, column_count, rng)
 
         return StructuralFeatures(
             element_count=element_count,
@@ -210,13 +227,19 @@ class SyntheticDocumentGenerator:
             column_count=column_count,
             has_header=has_header,
             has_footer=has_footer,
-            bounding_boxes=bboxes[:50],  # Limit stored boxes
+            bounding_boxes=bboxes[:100],  # Stored-box cap (matches SDK MAX_BOXES)
         )
 
     def _generate_bboxes(
-        self, total: int, tables: int, images: int, columns: int
+        self,
+        total: int,
+        tables: int,
+        images: int,
+        columns: int,
+        rng: random.Random | None = None,
     ) -> list[BoundingBox]:
         """Generate synthetic bounding boxes."""
+        rng = rng or self.rng
         bboxes = []
 
         col_width = 1.0 / columns
@@ -226,22 +249,22 @@ class SyntheticDocumentGenerator:
             if i < tables:
                 elem_type = "table"
                 # Tables are wider and taller
-                width = self.rng.uniform(0.4, 0.8)
-                height = self.rng.uniform(0.1, 0.3)
+                width = rng.uniform(0.4, 0.8)
+                height = rng.uniform(0.1, 0.3)
             elif i < tables + images:
                 elem_type = "figure"
-                width = self.rng.uniform(0.2, 0.5)
-                height = self.rng.uniform(0.15, 0.35)
+                width = rng.uniform(0.2, 0.5)
+                height = rng.uniform(0.15, 0.35)
             else:
                 elem_type = "text"
-                width = self.rng.uniform(0.3, col_width * 0.9)
-                height = self.rng.uniform(0.02, 0.08)
+                width = rng.uniform(0.3, col_width * 0.9)
+                height = rng.uniform(0.02, 0.08)
 
             # Position (ensure within bounds)
             col = i % columns
-            x = col * col_width + self.rng.uniform(0.01, 0.05)
+            x = col * col_width + rng.uniform(0.01, 0.05)
             x = min(x, 1.0 - width)
-            y = self.rng.uniform(0.05, 0.9)
+            y = rng.uniform(0.05, 0.9)
             y = min(y, 1.0 - height)
 
             bboxes.append(
@@ -251,7 +274,7 @@ class SyntheticDocumentGenerator:
                     width=width,
                     height=height,
                     element_type=elem_type,
-                    confidence=self.rng.uniform(0.85, 0.99),
+                    confidence=rng.uniform(0.85, 0.99),
                     reading_order=i,
                 )
             )
