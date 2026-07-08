@@ -9,6 +9,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Request, status
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +49,7 @@ from src.models import (
     FeedbackRequest,
     FeedbackResponse,
     ServiceStatus,
+    StructuralFeatures,
     Template,
     TemplateCreate,
     TemplateResponse,
@@ -66,7 +68,7 @@ from src.services.rate_limiter import get_redis_client
 from src.services.reliability_feedback import apply_reliability_feedback
 from src.services.reliability_scorer import compute_reliability_score
 from src.services.safeguard_engine import safeguard_engine
-from src.services.template_matcher import match_template
+from src.services.template_matcher import index_template, match_template, unindex_template
 
 logger = structlog.get_logger()
 
@@ -766,6 +768,10 @@ async def create_template(
     # Note: No refresh needed - all fields are populated from the constructor
     # Refresh would fail with RLS because SET LOCAL expires after commit
 
+    # Populate the LSH index (recall-only accelerator; exception-safe no-op
+    # when Redis/LSH is unavailable — matching falls back to the O(n) scan).
+    await index_template(template.id, tenant.tenant_id, body.structural_features)
+
     # Log audit event
     await log_template_created(
         tenant_id=tenant.tenant_id,
@@ -899,6 +905,9 @@ async def delete_template(
     db.add(template)
     await db.commit()
 
+    # Deprecated templates must stop appearing as LSH candidates.
+    await unindex_template(template.id)
+
     # Log audit event
     await log_audit_event(
         action=AuditAction.TEMPLATE_DEPRECATED,
@@ -951,6 +960,17 @@ async def update_template_status(
     template.status = body.status
     db.add(template)
     await db.commit()
+
+    # Keep the LSH candidate set in sync with ACTIVE status.
+    if body.status == TemplateStatus.ACTIVE and old_status != TemplateStatus.ACTIVE:
+        try:
+            reindex_features = StructuralFeatures.model_validate(template.structural_features)
+        except ValidationError:
+            logger.warning("lsh_reindex_invalid_features", template_id=str(template.id))
+        else:
+            await index_template(template.id, tenant.tenant_id, reindex_features)
+    elif old_status == TemplateStatus.ACTIVE and body.status != TemplateStatus.ACTIVE:
+        await unindex_template(template.id)
 
     # Log audit event
     await log_audit_event(
