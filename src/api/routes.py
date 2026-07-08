@@ -63,6 +63,7 @@ from src.services.baseline import update_baseline
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
 from src.services.rate_limiter import get_redis_client
+from src.services.reliability_feedback import apply_reliability_feedback
 from src.services.reliability_scorer import compute_reliability_score
 from src.services.safeguard_engine import safeguard_engine
 from src.services.template_matcher import match_template
@@ -270,16 +271,33 @@ async def evaluate(
     )
     alerts.extend(validation_warnings)
 
-    # Match template
-    matched_template, match_confidence = await match_template(
-        fingerprint=body.layout_fingerprint,
-        features=body.structural_features,
-        tenant_id=tenant.tenant_id,
-        db=db,
-    )
+    # Hard safeguard failures (ERROR:-prefixed) reject early: garbage
+    # features must not be matched, scored, or blended into baselines. The
+    # evaluation is still recorded (the audit trail is the product), still
+    # metered, and the ERROR strings surface in the response alerts.
+    safeguard_errors = [w for w in validation_warnings if w.startswith("ERROR:")]
+
+    if safeguard_errors:
+        decision = Decision.REJECT
+        matched_template = None
+        match_confidence = 0.0
+        drift_score = 0.0
+        reliability_score = 0.0
+        correction_rules: list[dict] = []
+        template_version_id = None
+    else:
+        # Match template
+        matched_template, match_confidence = await match_template(
+            fingerprint=body.layout_fingerprint,
+            features=body.structural_features,
+            tenant_id=tenant.tenant_id,
+            db=db,
+        )
 
     # Determine decision based on match confidence
-    if matched_template is None or match_confidence < 0.50:
+    if safeguard_errors:
+        pass  # decision already REJECT
+    elif matched_template is None or match_confidence < 0.50:
         decision = Decision.NEW
         drift_score = 0.0
         reliability_score = await compute_reliability_score(
@@ -590,6 +608,8 @@ async def submit_feedback(
         )
     ).scalar_one_or_none()
 
+    outcome_changed = existing is None or existing.outcome != body.outcome
+
     if existing:
         existing.outcome = body.outcome
         existing.field_error_count = body.field_error_count
@@ -608,6 +628,24 @@ async def submit_feedback(
         )
         db.add(feedback)
 
+    # Reliability self-calibration: one EWMA step of the matched template's
+    # baseline_reliability toward the observed outcome — applied on first
+    # submission or when a resubmission CHANGES the outcome (identical replays
+    # are no-ops, so one document can't ratchet a baseline down). Same
+    # transaction as the feedback row. FOR UPDATE guards concurrent feedback
+    # on evaluations sharing a template.
+    baseline_shift: dict[str, float] | None = None
+    if outcome_changed and evaluation.template_id is not None:
+        template = await db.get(Template, evaluation.template_id, with_for_update=True)
+        if template is not None:
+            baseline_old = template.baseline_reliability
+            if apply_reliability_feedback(template, body.outcome):
+                db.add(template)
+                baseline_shift = {
+                    "baseline_old": baseline_old,
+                    "baseline_new": template.baseline_reliability,
+                }
+
     await db.commit()
 
     await log_audit_event(
@@ -622,6 +660,7 @@ async def submit_feedback(
             if hasattr(evaluation.decision, "value")
             else str(evaluation.decision),
             "updated": existing is not None,
+            **(baseline_shift or {}),
         },
         ip_address=request.client.host if request.client else None,
     )

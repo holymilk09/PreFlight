@@ -131,6 +131,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Reliability Self-Calibration
+    reliability_learning_rate: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.5,
+        description=(
+            "EWMA rate for moving a template's baseline_reliability toward "
+            "reported feedback outcomes (correct=1.0, corrected=0.5, "
+            "rejected=0.0), so reliability scores converge on real-world "
+            "accuracy. 0 disables reliability learning."
+        ),
+    )
+
     # Usage Metering
     usage_enforce_quota: bool = Field(
         default=False,
