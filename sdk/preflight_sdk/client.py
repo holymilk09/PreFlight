@@ -63,7 +63,7 @@ class PreFlight:
         correlation_id: str,
         latency_ms: int = 0,
         cost_usd: float | None = None,
-        pipeline_id: str | None = None,
+        pipeline_id: str = "default",
     ) -> dict[str, Any]:
         """Evaluate extraction metadata; returns decision, drift, reliability.
 
@@ -83,9 +83,9 @@ class PreFlight:
             },
             "client_doc_hash": doc_hash,
             "client_correlation_id": correlation_id,
+            # Required by the API; identifies which of your pipelines sent this.
+            "pipeline_id": pipeline_id,
         }
-        if pipeline_id is not None:
-            payload["pipeline_id"] = pipeline_id
         return self._request("POST", "/v1/evaluate", json=payload)
 
     def submit_feedback(

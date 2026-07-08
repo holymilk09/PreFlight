@@ -159,6 +159,7 @@ class TestReliabilityLearning:
                 },
                 "client_doc_hash": "b" * 64,
                 "client_correlation_id": "rel-learn-1",
+                "pipeline_id": "rel-learn-pipeline",
             },
         )
         assert resp.status_code == 200, resp.text
