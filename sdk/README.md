@@ -15,7 +15,7 @@ pip install preflight-sdk        # once published; or: pip install ./sdk
 
 ```python
 from preflight_sdk import PreFlight
-from preflight_sdk.adapters import textract  # or azure, google
+from preflight_sdk.adapters import textract  # or azure, google, upstage
 
 # 1. Your normal extraction
 response = boto3.client("textract").analyze_document(...)
@@ -53,6 +53,7 @@ print(client.get_calibration())   # errors caught vs missed, per score band
 | `adapters.textract` | `analyze_document` response dict | Geometry already normalized |
 | `adapters.azure` | `prebuilt-layout` analyzeResult dict | Polygons are page-unit — normalized by page dimensions automatically |
 | `adapters.google` | Document AI document dict | Uses normalizedVertices when present |
+| `adapters.upstage` | Document Parse response dict | Polygon coordinates already normalized (0-1); 12-category taxonomy |
 
 All adapters reduce to the same normalized-box schema before computing
 features, which is what makes scores comparable across vendors.

@@ -153,6 +153,39 @@ goes to distribution, not serving.
 5. **Wire the dashboard to the calibration + usage endpoints** so the buyer sees
    the ROI number, not JSON.
 
+## 9a. Competitive note — bundled monitoring (Upstage Studio, July 2026)
+
+Upstage launched **Studio**, an agentic document-processing platform (parse →
+classify → extract → human review) with a bundled monitoring dashboard. This is
+the "IDP platforms bundle monitoring" risk from the register, now concrete.
+Why it does not wreck the wedge:
+
+- **It's Layer 2 (extraction); we're Layer 3 (governance).** Studio is one more
+  extractor — a `vendor=upstage` value, now a first-class SDK adapter and a
+  known provider in the cross-vendor analytics. Every new extractor widens the
+  population that needs a neutral scorekeeper.
+- **Its dashboard grades its own homework.** It monitors only Upstage's own
+  stack — no cross-vendor comparison, no drift-vs-baseline, no calibration of
+  scores against reported outcomes. That single-vendor blind spot IS the
+  neutrality pitch.
+- **It's a rip-and-replace migration**, not an overlay on the Textract/Azure/
+  multi-vendor pipelines our ICP already runs.
+
+**Positioning line to use:** *"Your extractor's built-in dashboard grades its
+own homework. PreFlight is the neutral scorekeeper across all of them —
+including Upstage."*
+
+**The real signal:** platforms shipping "good-enough" monitoring is the moat
+eroding on schedule. It doesn't kill us today, but it shortens the window to
+land design partners and start accumulating the cross-vendor calibration data
+no bundled dashboard can replicate. Move on partners this quarter.
+
+Supporting evidence (current research, not marketing): LLM extractors fail
+*quieter* than OCR — confident hallucination instead of visible garbage — and
+their confidence scores are badly calibrated (RLHF models overshoot empirical
+accuracy by ~15 points; 12-18% hallucination on enterprise numeric fields).
+That raises, not lowers, the value of an independent calibration loop.
+
 ## 10. Risks (clear-eyed)
 
 - **Thin-wedge risk:** a competent team can rebuild the scoring in weeks. Defense:

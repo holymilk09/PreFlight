@@ -22,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[2] / "sdk"))
 
 from preflight_sdk import PreFlight, PreFlightError, compute_fingerprint  # noqa: E402
-from preflight_sdk.adapters import azure, google, textract  # noqa: E402
+from preflight_sdk.adapters import azure, google, textract, upstage  # noqa: E402
 
 from src.models import StructuralFeatures  # noqa: E402
 
@@ -152,6 +152,73 @@ GOOGLE_DOCUMENT = {
 }
 
 
+# Upstage Document Parse: single `elements` array, categories, polygon
+# coordinates ALREADY normalized to [0, 1] (no page-dimension division).
+UPSTAGE_RESPONSE = {
+    "api": "2.0",
+    "model": "document-parse-250101",
+    "usage": {"pages": 1},
+    "elements": [
+        {
+            "id": 0,
+            "category": "heading1",
+            "page": 1,
+            "coordinates": [
+                {"x": 0.10, "y": 0.03},
+                {"x": 0.90, "y": 0.03},
+                {"x": 0.90, "y": 0.07},
+                {"x": 0.10, "y": 0.07},
+            ],
+        },
+        {
+            "id": 1,
+            "category": "table",
+            "page": 1,
+            "coordinates": [
+                {"x": 0.10, "y": 0.40},
+                {"x": 0.90, "y": 0.40},
+                {"x": 0.90, "y": 0.60},
+                {"x": 0.10, "y": 0.60},
+            ],
+        },
+        {
+            "id": 2,
+            "category": "chart",
+            "page": 1,
+            "coordinates": [
+                {"x": 0.60, "y": 0.10},
+                {"x": 0.90, "y": 0.10},
+                {"x": 0.90, "y": 0.30},
+                {"x": 0.60, "y": 0.30},
+            ],
+        },
+        {
+            "id": 3,
+            "category": "footer",
+            "page": 1,
+            "coordinates": [
+                {"x": 0.10, "y": 0.95},
+                {"x": 0.50, "y": 0.95},
+                {"x": 0.50, "y": 0.98},
+                {"x": 0.10, "y": 0.98},
+            ],
+        },
+        # An unknown/future category must fall back to the text channel.
+        {
+            "id": 4,
+            "category": "some_new_category",
+            "page": 1,
+            "coordinates": [
+                {"x": 0.10, "y": 0.20},
+                {"x": 0.80, "y": 0.20},
+                {"x": 0.80, "y": 0.24},
+                {"x": 0.10, "y": 0.24},
+            ],
+        },
+    ],
+}
+
+
 class TestAdapters:
     def test_textract_features_valid_and_typed(self):
         features = textract.extract_features(TEXTRACT_RESPONSE)
@@ -182,11 +249,25 @@ class TestAdapters:
         # The absolute-vertices block sits at the page bottom (footer).
         assert model.has_footer is True
 
+    def test_upstage_normalized_polygons_and_categories(self):
+        features = upstage.extract_features(UPSTAGE_RESPONSE)
+        model = StructuralFeatures.model_validate(features)
+        assert model.page_count == 1
+        assert model.table_count == 1  # table
+        assert model.image_count == 1  # chart -> figure channel
+        assert model.text_block_count == 3  # heading1 + footer + unknown-category
+        assert model.has_header is True  # heading1 at y=0.03
+        assert model.has_footer is True  # footer near y=0.97
+        # Coordinates are already normalized; nothing should exceed 1.0.
+        for box in model.bounding_boxes:
+            assert 0.0 <= box.x <= 1.0 and 0.0 <= box.y <= 1.0
+
     def test_all_adapters_share_schema(self):
         for features in (
             textract.extract_features(TEXTRACT_RESPONSE),
             azure.extract_features(AZURE_RESULT),
             google.extract_features(GOOGLE_DOCUMENT),
+            upstage.extract_features(UPSTAGE_RESPONSE),
         ):
             model = StructuralFeatures.model_validate(features)
             assert 0.0 <= model.text_density <= 1.0
@@ -205,6 +286,7 @@ class TestFingerprintParity:
         for features in (
             azure.extract_features(AZURE_RESULT),
             google.extract_features(GOOGLE_DOCUMENT),
+            upstage.extract_features(UPSTAGE_RESPONSE),
         ):
             server_json = StructuralFeatures.model_validate(features).model_dump_json()
             server_fp = hashlib.sha256(server_json.encode()).hexdigest()

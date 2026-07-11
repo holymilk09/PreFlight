@@ -264,7 +264,8 @@ async def test_engine():
                 (gen_random_uuid(), 'google', 'Google Document AI', 1.0, 1.0, '["text_segment", "table", "form_field", "paragraph"]', 550, true, true, NOW(), NOW()),
                 (gen_random_uuid(), 'nvidia', 'NVIDIA Nemotron', 1.05, 0.9, '["text", "table", "figure", "list", "title"]', 300, true, true, NOW(), NOW()),
                 (gen_random_uuid(), 'abbyy', 'ABBYY FineReader', 0.98, 1.0, '["text", "table", "barcode", "checkmark"]', 800, true, true, NOW(), NOW()),
-                (gen_random_uuid(), 'tesseract', 'Tesseract OCR', 0.85, 1.2, '["text", "line", "word"]', 200, true, true, NOW(), NOW())
+                (gen_random_uuid(), 'tesseract', 'Tesseract OCR', 0.85, 1.2, '["text", "line", "word"]', 200, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'upstage', 'Upstage Document Parse', 1.0, 1.0, '["paragraph", "table", "figure", "chart", "header", "footer", "caption", "equation", "heading1", "list", "index", "footnote"]', 700, true, true, NOW(), NOW())
             ON CONFLICT (vendor) DO NOTHING
         """)
         )

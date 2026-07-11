@@ -45,14 +45,14 @@ if result.decision == "REVIEW":
 ### 1. Install the SDK
 
 ```bash
-pip install ./sdk    # preflight-sdk: adapters for Textract, Azure DI, Google DocAI
+pip install ./sdk    # preflight-sdk: adapters for Textract, Azure DI, Google DocAI, Upstage
 ```
 
 ### 2. Evaluate After Extraction (3 lines)
 
 ```python
 from preflight_sdk import PreFlight
-from preflight_sdk.adapters import textract  # or azure, google
+from preflight_sdk.adapters import textract  # or azure, google, upstage
 
 # Your normal extraction
 textract_response = textract_client.analyze_document(...)
