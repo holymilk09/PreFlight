@@ -159,6 +159,8 @@ uvicorn src.api.main:app --reload
 - [Architecture](docs/ARCHITECTURE.md) - System design
 - [Business Model & GTM](docs/GTM.md) - What we sell, to whom, and how
 - [Scorecard](docs/SCORECARD.md) - Measured algorithm quality, honest limits
+- [How It Works](docs/HOW_IT_WORKS.md) - Plain-English explanation (the sales script)
+- [Operator Runbook](docs/RUNBOOK.md) - Ship, monitor, support, and onboard a client
 
 ## Why Metadata-Only?
 
