@@ -17,6 +17,8 @@ system behaviour, not a real-world accuracy claim.
 import asyncio
 import random
 
+from uuid_extensions import uuid7
+
 from src.models import StructuralFeatures, Template, TemplateStatus
 from src.services.drift_detector import compute_drift_score
 from src.services.template_matcher import _feature_vectors, _match_confidence
@@ -37,8 +39,6 @@ DRIFT_REVIEW = 0.30
 
 
 def make_template(supplier: str, features: StructuralFeatures) -> Template:
-    from uuid_extensions import uuid7
-
     return Template(
         id=uuid7(),
         tenant_id=uuid7(),
