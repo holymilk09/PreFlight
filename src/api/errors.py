@@ -32,6 +32,8 @@ class ErrorCode(str, Enum):
     TENANT_NOT_FOUND = "TENANT_NOT_FOUND"
     API_KEY_NOT_FOUND = "API_KEY_NOT_FOUND"
     USER_NOT_FOUND = "USER_NOT_FOUND"
+    ALERT_RULE_NOT_FOUND = "ALERT_RULE_NOT_FOUND"
+    WEBHOOK_NOT_FOUND = "WEBHOOK_NOT_FOUND"
 
     # Conflict errors (409)
     TEMPLATE_ALREADY_EXISTS = "TEMPLATE_ALREADY_EXISTS"
@@ -46,6 +48,7 @@ class ErrorCode(str, Enum):
 
     # Rate limiting (429)
     RATE_LIMIT_EXCEEDED = "RATE_LIMIT_EXCEEDED"
+    QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
 
     # Server errors (500)
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -143,6 +146,16 @@ def rate_limited(message: str = "Rate limit exceeded", **details: Any) -> APIErr
     )
 
 
+def quota_exceeded(message: str = "Monthly evaluation quota exceeded", **details: Any) -> APIError:
+    """Create a 429 error for an exhausted monthly plan quota."""
+    return APIError(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        code=ErrorCode.QUOTA_EXCEEDED,
+        message=message,
+        details=details if details else None,
+    )
+
+
 # Pre-built common errors for convenience
 
 TEMPLATE_NOT_FOUND = not_found(ErrorCode.TEMPLATE_NOT_FOUND, "Template not found")
@@ -150,4 +163,6 @@ EVALUATION_NOT_FOUND = not_found(ErrorCode.EVALUATION_NOT_FOUND, "Evaluation not
 TENANT_NOT_FOUND = not_found(ErrorCode.TENANT_NOT_FOUND, "Tenant not found")
 API_KEY_NOT_FOUND = not_found(ErrorCode.API_KEY_NOT_FOUND, "API key not found")
 USER_NOT_FOUND = not_found(ErrorCode.USER_NOT_FOUND, "User not found")
+ALERT_RULE_NOT_FOUND = not_found(ErrorCode.ALERT_RULE_NOT_FOUND, "Alert rule not found")
+WEBHOOK_NOT_FOUND = not_found(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook endpoint not found")
 NO_FIELDS_TO_UPDATE = bad_request(ErrorCode.NO_FIELDS_TO_UPDATE, "No fields to update")

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "preflight-sdk"
+version = "0.1.0"
+description = "PreFlight client SDK: turn raw extractor output (Textract, Azure DI, Google DocAI) into PreFlight structural features and call the API in 3 lines."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+dependencies = [
+    "httpx>=0.24",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["preflight_sdk"]

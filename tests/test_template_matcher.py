@@ -120,6 +120,52 @@ class TestCosineSimilarity:
         assert _cosine_similarity(vec_a, vec_b) == pytest.approx(1.0, abs=0.0001)
 
 
+class TestProductionSimilarityAndCalibration:
+    """Tests for the L1-Gower production metric and confidence calibration."""
+
+    def test_identical_vectors_full_similarity(self):
+        from src.services.template_matcher import _feature_similarity
+
+        vec = [0.5, 0.3, 0.8, 0.2]
+        assert _feature_similarity(vec, vec) == pytest.approx(1.0, abs=1e-9)
+
+    def test_similarity_sensitive_to_magnitude(self):
+        """Unlike cosine, parallel vectors of different magnitude differ."""
+        from src.services.template_matcher import _feature_similarity
+
+        vec_a = [0.2, 0.2, 0.2]
+        vec_b = [0.8, 0.8, 0.8]
+        assert _cosine_similarity(vec_a, vec_b) == pytest.approx(1.0, abs=1e-9)
+        assert _feature_similarity(vec_a, vec_b) == pytest.approx(0.4, abs=1e-9)
+
+    def test_mismatched_lengths_return_zero(self):
+        from src.services.template_matcher import _feature_similarity
+
+        assert _feature_similarity([0.5], [0.5, 0.5]) == 0.0
+        assert _feature_similarity([], []) == 0.0
+
+    def test_calibration_anchors(self):
+        """Measured boundaries map onto the documented decision thresholds."""
+        from src.services.template_matcher import (
+            _RAW_MATCH_ANCHOR,
+            _RAW_NEW_ANCHOR,
+            _calibrate_confidence,
+        )
+
+        assert _calibrate_confidence(1.0) == pytest.approx(1.0)
+        assert _calibrate_confidence(_RAW_MATCH_ANCHOR) == pytest.approx(0.85)
+        assert _calibrate_confidence(_RAW_NEW_ANCHOR) == pytest.approx(0.50)
+        assert _calibrate_confidence(0.0) == 0.0
+
+    def test_calibration_is_monotone(self):
+        """Calibration must preserve similarity ranking."""
+        from src.services.template_matcher import _calibrate_confidence
+
+        values = [_calibrate_confidence(i / 100) for i in range(101)]
+        assert values == sorted(values)
+        assert all(0.0 <= v <= 1.0 for v in values)
+
+
 class TestFeatureSimilarity:
     """Integration tests for feature-based similarity."""
 

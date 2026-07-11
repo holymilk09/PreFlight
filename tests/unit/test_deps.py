@@ -17,7 +17,7 @@ class TestGetDbSession:
 
         mock_session = AsyncMock()
 
-        with patch("src.api.deps.async_session_maker") as mock_maker:
+        with patch("src.db.async_session_maker") as mock_maker:
             mock_maker.return_value.__aenter__.return_value = mock_session
             mock_maker.return_value.__aexit__.return_value = None
 
@@ -34,7 +34,7 @@ class TestGetDbSession:
         mock_session = AsyncMock()
         mock_session.close = AsyncMock()
 
-        with patch("src.api.deps.async_session_maker") as mock_maker:
+        with patch("src.db.async_session_maker") as mock_maker:
             # Set up the context manager to return our mock session
             mock_cm = AsyncMock()
             mock_cm.__aenter__.return_value = mock_session
@@ -74,7 +74,7 @@ class TestGetTenantDb:
         mock_session = AsyncMock()
         mock_session.close = AsyncMock()
 
-        with patch("src.api.deps.async_session_maker") as mock_maker:
+        with patch("src.db.async_session_maker") as mock_maker:
             mock_cm = AsyncMock()
             mock_cm.__aenter__.return_value = mock_session
             mock_cm.__aexit__.return_value = None

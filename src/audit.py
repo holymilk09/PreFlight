@@ -198,6 +198,129 @@ async def log_evaluation_requested(
     )
 
 
+async def log_security_degraded(
+    component: str,
+    reason: str,
+    ip_address: str | None = None,
+    request_id: UUID | None = None,
+) -> None:
+    """Log a security-degraded event (fail-closed posture engaged).
+
+    Emitted when a security-critical backend (e.g. Redis used for rate
+    limiting or token revocation) is unavailable and the service rejects
+    requests as a result.
+    """
+    await log_audit_event(
+        action=AuditAction.SECURITY_DEGRADED,
+        details={"component": component, "reason": reason},
+        ip_address=ip_address,
+        request_id=request_id,
+    )
+
+
+async def log_alert_triggered(
+    tenant_id: UUID,
+    evaluation_id: UUID,
+    alert_count: int,
+    severities: list[str],
+    ip_address: str | None = None,
+    request_id: UUID | None = None,
+    session: AsyncSession | None = None,
+) -> None:
+    """Log that one or more alerts were triggered for an evaluation."""
+    await log_audit_event(
+        action=AuditAction.ALERT_TRIGGERED,
+        tenant_id=tenant_id,
+        resource_type="evaluation",
+        resource_id=evaluation_id,
+        details={"alert_count": alert_count, "severities": severities},
+        ip_address=ip_address,
+        request_id=request_id,
+        session=session,
+    )
+
+
+async def log_alert_rule_created(
+    tenant_id: UUID,
+    rule_id: UUID,
+    name: str,
+    metric: str,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    request_id: UUID | None = None,
+) -> None:
+    """Log alert rule creation event."""
+    await log_audit_event(
+        action=AuditAction.ALERT_RULE_CREATED,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        resource_type="alert_rule",
+        resource_id=rule_id,
+        details={"name": name, "metric": metric},
+        ip_address=ip_address,
+        request_id=request_id,
+    )
+
+
+async def log_alert_rule_deleted(
+    tenant_id: UUID,
+    rule_id: UUID,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    request_id: UUID | None = None,
+) -> None:
+    """Log alert rule deletion event."""
+    await log_audit_event(
+        action=AuditAction.ALERT_RULE_DELETED,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        resource_type="alert_rule",
+        resource_id=rule_id,
+        ip_address=ip_address,
+        request_id=request_id,
+    )
+
+
+async def log_webhook_created(
+    tenant_id: UUID,
+    webhook_id: UUID,
+    url: str,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    request_id: UUID | None = None,
+) -> None:
+    """Log webhook endpoint creation event (URL only, never the secret)."""
+    await log_audit_event(
+        action=AuditAction.WEBHOOK_CREATED,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        resource_type="webhook_endpoint",
+        resource_id=webhook_id,
+        details={"url": url},
+        ip_address=ip_address,
+        request_id=request_id,
+    )
+
+
+async def log_webhook_deleted(
+    tenant_id: UUID,
+    webhook_id: UUID,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    request_id: UUID | None = None,
+) -> None:
+    """Log webhook endpoint deletion event."""
+    await log_audit_event(
+        action=AuditAction.WEBHOOK_DELETED,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        resource_type="webhook_endpoint",
+        resource_id=webhook_id,
+        ip_address=ip_address,
+        request_id=request_id,
+    )
+
+
 async def log_rate_limit_exceeded(
     tenant_id: UUID | None,
     api_key_id: UUID | None,

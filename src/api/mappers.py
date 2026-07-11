@@ -7,6 +7,10 @@ centralizing the mapping logic to avoid duplication across endpoints.
 from uuid import UUID
 
 from src.models import (
+    AlertEvent,
+    AlertEventRecord,
+    AlertRule,
+    AlertRuleResponse,
     CorrectionRule,
     Decision,
     Evaluation,
@@ -15,6 +19,9 @@ from src.models import (
     ExtractorProvider,
     Template,
     TemplateResponse,
+    WebhookCreatedResponse,
+    WebhookEndpoint,
+    WebhookResponse,
 )
 
 
@@ -42,9 +49,7 @@ def evaluation_to_record(
         match_confidence=evaluation.match_confidence,
         drift_score=evaluation.drift_score,
         reliability_score=evaluation.reliability_score,
-        correction_rules=[
-            CorrectionRule(**r) for r in (evaluation.correction_rules or [])
-        ],
+        correction_rules=[CorrectionRule(**r) for r in (evaluation.correction_rules or [])],
         extractor_vendor=evaluation.extractor_vendor,
         extractor_model=evaluation.extractor_model,
         extractor_version=evaluation.extractor_version,
@@ -146,4 +151,67 @@ def create_evaluation(
         provider_id=provider.id if provider else None,
         validation_warnings=validation_warnings,
         processing_time_ms=processing_time_ms,
+    )
+
+
+def alert_rule_to_response(rule: AlertRule) -> AlertRuleResponse:
+    """Convert an AlertRule model to an AlertRuleResponse."""
+    return AlertRuleResponse(
+        id=rule.id,
+        name=rule.name,
+        metric=rule.metric,
+        comparator=rule.comparator,
+        threshold=rule.threshold,
+        severity=rule.severity,
+        enabled=rule.enabled,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+    )
+
+
+def webhook_to_response(endpoint: WebhookEndpoint) -> WebhookResponse:
+    """Convert a WebhookEndpoint model to a WebhookResponse (no secret)."""
+    return WebhookResponse(
+        id=endpoint.id,
+        url=endpoint.url,
+        description=endpoint.description,
+        enabled=endpoint.enabled,
+        created_at=endpoint.created_at,
+        updated_at=endpoint.updated_at,
+    )
+
+
+def webhook_to_created_response(endpoint: WebhookEndpoint, secret: str) -> WebhookCreatedResponse:
+    """Convert a WebhookEndpoint to a WebhookCreatedResponse.
+
+    ``secret`` is the plaintext signing secret, returned exactly once at
+    creation. It is NOT read from ``endpoint.secret`` (which is encrypted at
+    rest).
+    """
+    return WebhookCreatedResponse(
+        id=endpoint.id,
+        url=endpoint.url,
+        description=endpoint.description,
+        enabled=endpoint.enabled,
+        secret=secret,
+        created_at=endpoint.created_at,
+        updated_at=endpoint.updated_at,
+    )
+
+
+def alert_event_to_record(event: AlertEvent) -> AlertEventRecord:
+    """Convert an AlertEvent model to an AlertEventRecord response."""
+    return AlertEventRecord(
+        id=event.id,
+        evaluation_id=event.evaluation_id,
+        rule_id=event.rule_id,
+        metric=event.metric,
+        value=event.value,
+        threshold=event.threshold,
+        severity=event.severity,
+        message=event.message,
+        delivery_status=event.delivery_status,
+        delivery_attempts=event.delivery_attempts,
+        last_error=event.last_error,
+        created_at=event.created_at,
     )

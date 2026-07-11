@@ -30,6 +30,30 @@ from src.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter_circuit_breaker():
+    """Reset the rate-limiter circuit-breaker global state between tests.
+
+    The breaker counters/flag and its event-loop-bound lock are module-global.
+    Without a reset, a test that trips the breaker open leaves it open for later
+    tests — and with ``security_fail_closed`` defaulting to True, an open breaker
+    now denies requests (503) instead of failing open, producing order-dependent
+    failures. Clearing the cached lock also avoids reusing a Lock bound to a
+    previous, now-closed event loop.
+    """
+    from src.services import rate_limiter
+
+    def _reset() -> None:
+        rate_limiter._circuit_breaker_failures = 0
+        rate_limiter._circuit_breaker_last_failure = 0.0
+        rate_limiter._circuit_breaker_open = False
+        rate_limiter._circuit_breaker_lock = None
+
+    _reset()
+    yield
+    _reset()
+
+
 @pytest.fixture
 def sample_structural_features() -> StructuralFeatures:
     """Standard invoice-like structural features."""
@@ -240,7 +264,8 @@ async def test_engine():
                 (gen_random_uuid(), 'google', 'Google Document AI', 1.0, 1.0, '["text_segment", "table", "form_field", "paragraph"]', 550, true, true, NOW(), NOW()),
                 (gen_random_uuid(), 'nvidia', 'NVIDIA Nemotron', 1.05, 0.9, '["text", "table", "figure", "list", "title"]', 300, true, true, NOW(), NOW()),
                 (gen_random_uuid(), 'abbyy', 'ABBYY FineReader', 0.98, 1.0, '["text", "table", "barcode", "checkmark"]', 800, true, true, NOW(), NOW()),
-                (gen_random_uuid(), 'tesseract', 'Tesseract OCR', 0.85, 1.2, '["text", "line", "word"]', 200, true, true, NOW(), NOW())
+                (gen_random_uuid(), 'tesseract', 'Tesseract OCR', 0.85, 1.2, '["text", "line", "word"]', 200, true, true, NOW(), NOW()),
+                (gen_random_uuid(), 'upstage', 'Upstage Document Parse', 1.0, 1.0, '["paragraph", "table", "figure", "chart", "header", "footer", "caption", "equation", "heading1", "list", "index", "footnote"]', 700, true, true, NOW(), NOW())
             ON CONFLICT (vendor) DO NOTHING
         """)
         )

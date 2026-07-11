@@ -46,6 +46,7 @@ from src.metrics import (
     get_metrics,
     get_metrics_content_type,
     record_rate_limit_hit,
+    record_security_degraded,
 )
 from src.models import AuditAction, AuditLog
 from src.security import generate_request_id, hash_api_key
@@ -164,6 +165,39 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# Throttle SECURITY_DEGRADED audit/log to avoid flood under sustained
+# Redis outage. Simple in-memory guard (not Redis-backed by design).
+_SECURITY_DEGRADED_LOG_INTERVAL_SECONDS = 5.0
+_last_security_degraded_log: float = 0.0
+
+
+async def _maybe_log_security_degraded(
+    component: str,
+    reason: str,
+    client_ip: str,
+    request_id: str | None,
+) -> None:
+    """Audit/log a security-degraded event at most once per interval."""
+    global _last_security_degraded_log
+    now = time.monotonic()
+    if now - _last_security_degraded_log < _SECURITY_DEGRADED_LOG_INTERVAL_SECONDS:
+        return
+    _last_security_degraded_log = now
+    try:
+        from uuid import UUID
+
+        from src.audit import log_security_degraded
+
+        await log_security_degraded(
+            component=component,
+            reason=reason,
+            ip_address=client_ip,
+            request_id=UUID(request_id) if request_id else None,
+        )
+    except Exception:
+        logger.warning("security_degraded_audit_failed", component=component)
+
+
 async def _log_rate_limit_exceeded(
     identifier: str,
     client_ip: str,
@@ -216,17 +250,56 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Response:
         identifier = f"ip:{client_ip}"
         limit = settings.rate_limit_unauthenticated
 
+    request_id = getattr(request.state, "request_id", None)
+
     # Check rate limit
     try:
         result = await check_rate_limit(identifier, limit)
     except (ConnectionError, TimeoutError, OSError) as e:
-        # Redis connection issues - fail open but log
+        # Redis connection issues.
         logger.warning(
             "rate_limit_redis_unavailable",
             identifier=identifier[:30],
             error=str(e),
         )
+        if settings.security_fail_closed:
+            # Fail-closed: we cannot verify the limit, so reject (503).
+            record_security_degraded("rate_limit")
+            await _maybe_log_security_degraded(
+                component="rate_limit",
+                reason="redis_unavailable",
+                client_ip=client_ip,
+                request_id=request_id,
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "Service temporarily unavailable (security backend degraded).",
+                    "retry_after": 60,
+                },
+                headers={"Retry-After": "60"},
+            )
+        # Legacy fail-open: allow the request through.
         return await call_next(request)
+
+    # Degraded result (circuit-open or Redis-down detected inside check_rate_limit
+    # while fail-closed): reject with 503, not a normal 429.
+    if not result.allowed and result.degraded:
+        record_security_degraded("rate_limit")
+        await _maybe_log_security_degraded(
+            component="rate_limit",
+            reason="rate_limit_backend_degraded",
+            client_ip=client_ip,
+            request_id=request_id,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Service temporarily unavailable (security backend degraded).",
+                "retry_after": result.reset_after_seconds,
+            },
+            headers={"Retry-After": str(result.reset_after_seconds)},
+        )
 
     # Add rate limit headers
     if result.allowed:
@@ -447,12 +520,16 @@ async def metrics() -> Response:
 
 # Import routes after app is created to avoid circular imports
 from src.api.admin_routes import router as admin_router  # noqa: E402
+from src.api.alert_routes import router as alert_router  # noqa: E402
+from src.api.analytics_routes import router as analytics_router  # noqa: E402
 from src.api.routes import router as api_router  # noqa: E402
 from src.api.user_auth import router as auth_router  # noqa: E402
 
 app.include_router(api_router, prefix="/v1")
 app.include_router(admin_router, prefix="/v1")
 app.include_router(auth_router, prefix="/v1")
+app.include_router(alert_router, prefix="/v1")
+app.include_router(analytics_router, prefix="/v1")
 
 
 # -----------------------------------------------------------------------------

@@ -91,6 +91,59 @@ class TestSettingsValidation:
 
         assert "placeholder" in str(exc.value).lower()
 
+    def test_empty_infra_passwords_allowed(self):
+        """Empty postgres/redis passwords are accepted (managed-deploy posture).
+
+        On managed platforms credentials live in the connection URL (or the broker
+        needs no auth), so an empty value must not fail validation.
+        """
+        from src.config import Settings
+
+        settings = Settings(
+            jwt_secret="a" * 32,
+            api_key_salt="b" * 32,
+            postgres_password="",
+            redis_password="",
+        )
+
+        assert settings.postgres_password == ""
+        assert settings.redis_password == ""
+
+
+class TestDatabaseUrlNormalization:
+    """Tests for DATABASE_URL scheme normalization to the asyncpg driver."""
+
+    def _settings(self, database_url: str):
+        from src.config import Settings
+
+        return Settings(
+            jwt_secret="a" * 32,
+            api_key_salt="b" * 32,
+            postgres_password="",
+            redis_password="",
+            database_url=database_url,
+        )
+
+    def test_bare_postgres_scheme_normalized(self):
+        """`postgres://` (Render/Railway/Heroku) -> `postgresql+asyncpg://`."""
+        s = self._settings("postgres://user:pw@host:5432/db")
+        assert s.database_url == "postgresql+asyncpg://user:pw@host:5432/db"
+
+    def test_bare_postgresql_scheme_normalized(self):
+        """`postgresql://` (no driver) -> `postgresql+asyncpg://`."""
+        s = self._settings("postgresql://user:pw@host:5432/db")
+        assert s.database_url == "postgresql+asyncpg://user:pw@host:5432/db"
+
+    def test_asyncpg_scheme_unchanged(self):
+        """A URL that already pins the asyncpg driver is left untouched."""
+        url = "postgresql+asyncpg://user:pw@host:5432/db"
+        assert self._settings(url).database_url == url
+
+    def test_explicit_other_driver_unchanged(self):
+        """A URL that pins another driver is not rewritten."""
+        url = "postgresql+psycopg://user:pw@host:5432/db"
+        assert self._settings(url).database_url == url
+
 
 class TestCorsOrigins:
     """Tests for CORS origins parsing."""

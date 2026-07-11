@@ -1,5 +1,11 @@
 # System Architecture
 
+> **Status note (July 2026):** parts of this document describe the *target*
+> architecture (Kafka, Trillian, TimescaleDB, Temporal, event sourcing). The
+> shipped system is intentionally simpler: FastAPI + PostgreSQL (RLS) + Redis,
+> with alerting/webhooks in-process. See [CLAUDE.md](../CLAUDE.md) and the
+> [README](../README.md) for what actually runs today.
+
 ## Overview
 
 The Document Extraction Control Plane is a metadata-only governance system that sits between customer extraction pipelines and their results databases. We receive structural metadata about documents and return governance decisions—never touching actual document content.

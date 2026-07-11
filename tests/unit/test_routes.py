@@ -353,12 +353,17 @@ class TestEvaluateDecisionLogic:
                 db=mock_db_with_provider,
             )
 
-            # Verify db.add and db.commit were called
-            mock_db_with_provider.add.assert_called_once()
+            # Verify db.add was called for the evaluation and commit was called
+            # once. (Alerting may additively db.add() AlertEvents in the same
+            # transaction; the evaluation is always the first add.)
+            assert mock_db_with_provider.add.call_count >= 1
             mock_db_with_provider.commit.assert_called_once()
 
-            # Verify the evaluation record has correct data
-            stored_eval = mock_db_with_provider.add.call_args[0][0]
+            # Verify the evaluation record (first add) has correct data.
+            from src.models import Evaluation as _Evaluation
+
+            stored_eval = mock_db_with_provider.add.call_args_list[0][0][0]
+            assert isinstance(stored_eval, _Evaluation)
             assert stored_eval.tenant_id == mock_tenant.tenant_id
             assert stored_eval.correlation_id == mock_evaluate_request.client_correlation_id
             assert stored_eval.decision == Decision.NEW

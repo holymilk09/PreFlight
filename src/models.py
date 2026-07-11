@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from pydantic import Field, field_validator
+from sqlalchemy import DDL, Index, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Column, Relationship, SQLModel
 from sqlmodel import Field as SQLField
@@ -56,10 +57,19 @@ class AuditAction(str, Enum):
     EVALUATION_REQUESTED = "evaluation_requested"
     AUTH_FAILED = "auth_failed"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
+    QUOTA_EXCEEDED = "quota_exceeded"
     USER_SIGNUP = "user_signup"
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
+    ACCOUNT_LOCKED = "account_locked"
     PASSWORD_CHANGED = "password_changed"
+    FEEDBACK_RECORDED = "feedback_recorded"
+    SECURITY_DEGRADED = "security_degraded"
+    ALERT_TRIGGERED = "alert_triggered"
+    ALERT_RULE_CREATED = "alert_rule_created"
+    ALERT_RULE_DELETED = "alert_rule_deleted"
+    WEBHOOK_CREATED = "webhook_created"
+    WEBHOOK_DELETED = "webhook_deleted"
 
 
 # -----------------------------------------------------------------------------
@@ -96,6 +106,11 @@ class User(SQLModel, table=True):
     is_active: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     last_login_at: datetime | None = SQLField(default=None)
+    # Per-user brute-force lockout state. failed_login_count tracks consecutive
+    # failed logins since the last success/lock; locked_until, when in the future,
+    # blocks authentication even with a correct password.
+    failed_login_count: int = SQLField(default=0, nullable=False)
+    locked_until: datetime | None = SQLField(default=None)
 
     # Relationships
     tenant: Tenant = Relationship(back_populates="users")
@@ -157,6 +172,10 @@ class Evaluation(SQLModel, table=True):
     """Document evaluation record."""
 
     __tablename__ = "evaluations"
+    # Composite index for tenant-scoped time-range scans (analytics endpoints
+    # and the /v1/evaluations listing). Serves the tenant_id equality + created_at
+    # range/ordering in one access path.
+    __table_args__ = (Index("ix_evaluations_tenant_created", "tenant_id", "created_at"),)
 
     id: UUID = SQLField(default_factory=uuid7, primary_key=True)
     tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
@@ -185,6 +204,40 @@ class Evaluation(SQLModel, table=True):
 
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     processing_time_ms: int | None = SQLField(default=None)
+
+
+class FeedbackOutcome(str, Enum):
+    """Ground-truth outcome reported for an evaluation (metadata only)."""
+
+    CORRECT = "correct"  # Extraction accepted downstream as-is
+    CORRECTED = "corrected"  # Human review had to fix one or more fields
+    REJECTED = "rejected"  # Extraction unusable (wrong doc, unreadable, etc.)
+
+
+class EvaluationFeedback(SQLModel, table=True):
+    """Reported outcome for an evaluation — closes the scoring loop.
+
+    This is how tenants tell us whether a decision turned out right (accepted
+    downstream, corrected in review, or rejected). It calibrates reliability
+    scores against reality and powers the ROI analytics (errors caught vs
+    missed). Metadata only: outcomes and counts, never field values or content.
+    One row per evaluation; resubmission updates it.
+    """
+
+    __tablename__ = "evaluation_feedback"
+    __table_args__ = (Index("ix_feedback_tenant_created", "tenant_id", "created_at"),)
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    evaluation_id: UUID = SQLField(
+        foreign_key="evaluations.id", nullable=False, unique=True, index=True
+    )
+    outcome: FeedbackOutcome = SQLField(nullable=False)
+    field_error_count: int | None = SQLField(default=None)
+    review_seconds: int | None = SQLField(default=None)
+    source: str | None = SQLField(max_length=50, default=None)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime | None = SQLField(default=None)
 
 
 class ExtractorProvider(SQLModel, table=True):
@@ -230,6 +283,101 @@ class AuditLog(SQLModel, table=True):
     details: dict[str, Any] | None = SQLField(default=None, sa_column=Column(JSONB))
     ip_address: str | None = SQLField(default=None, max_length=45)  # IPv6 max length
     request_id: UUID | None = SQLField(default=None)
+
+
+# Make audit_log append-only at the database level: a BEFORE UPDATE OR DELETE
+# trigger rejects any row mutation, for every role (tamper-evidence for SR 26-2
+# style audit requirements). INSERT and TRUNCATE/DROP are unaffected, so normal
+# logging and test teardown still work. Attached to create_all (tests) and
+# replicated in migration 009 for existing databases.
+_AUDIT_NO_MUTATE_FN = DDL(  # type: ignore[no-untyped-call]
+    """
+    CREATE OR REPLACE FUNCTION audit_log_no_mutate() RETURNS trigger AS $$
+    BEGIN
+        RAISE EXCEPTION 'audit_log is append-only; updates and deletes are not permitted';
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+_AUDIT_NO_MUTATE_TRIGGER = DDL(  # type: ignore[no-untyped-call]
+    "CREATE TRIGGER audit_log_append_only "
+    "BEFORE UPDATE OR DELETE ON audit_log "
+    "FOR EACH ROW EXECUTE FUNCTION audit_log_no_mutate()"
+)
+event.listen(AuditLog.__table__, "after_create", _AUDIT_NO_MUTATE_FN)  # type: ignore[attr-defined]
+event.listen(AuditLog.__table__, "after_create", _AUDIT_NO_MUTATE_TRIGGER)  # type: ignore[attr-defined]
+
+
+class AlertRule(SQLModel, table=True):
+    """Tenant-defined alerting rule.
+
+    Compares an evaluation metric against a threshold. When breached, an
+    AlertEvent is generated. If a tenant defines no rules, built-in default
+    rules (encoding CLAUDE.md thresholds) apply.
+    """
+
+    __tablename__ = "alert_rules"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    name: str = SQLField(max_length=120, nullable=False)
+    # "drift" | "reliability" | "unknown_provider"
+    metric: str = SQLField(max_length=40, nullable=False)
+    # "gt" | "lt" | "eq" (for unknown_provider, ignored/"eq")
+    comparator: str = SQLField(max_length=4, nullable=False, default="gt")
+    threshold: float | None = SQLField(default=None)
+    # "info" | "warning" | "critical"
+    severity: str = SQLField(max_length=20, nullable=False, default="warning")
+    enabled: bool = SQLField(default=True, nullable=False)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class WebhookEndpoint(SQLModel, table=True):
+    """Tenant webhook endpoint for alert delivery.
+
+    The ``secret`` is retained server-side to compute the outbound HMAC
+    signature. It is stored in plaintext at rest (encryption deferred) and
+    is returned to the client only once, at creation time.
+    """
+
+    __tablename__ = "webhook_endpoints"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    url: str = SQLField(max_length=2048, nullable=False)
+    # Stores the signing secret encrypted at rest (Fernet); ciphertext is longer
+    # than the 64-char plaintext, so allow ample width.
+    secret: str = SQLField(max_length=512, nullable=False)
+    description: str | None = SQLField(max_length=255, default=None)
+    enabled: bool = SQLField(default=True, nullable=False)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class AlertEvent(SQLModel, table=True):
+    """A generated alert event, persisted synchronously in the evaluate txn.
+
+    Webhook delivery state is updated asynchronously by the background task.
+    A null ``rule_id`` indicates a built-in default rule fired.
+    """
+
+    __tablename__ = "alert_events"
+
+    id: UUID = SQLField(default_factory=uuid7, primary_key=True)
+    tenant_id: UUID = SQLField(foreign_key="tenants.id", nullable=False, index=True)
+    evaluation_id: UUID | None = SQLField(default=None, foreign_key="evaluations.id", index=True)
+    rule_id: UUID | None = SQLField(default=None, foreign_key="alert_rules.id")
+    metric: str = SQLField(max_length=40, nullable=False)
+    value: float | None = SQLField(default=None)
+    threshold: float | None = SQLField(default=None)
+    severity: str = SQLField(max_length=20, nullable=False)
+    message: str = SQLField(max_length=500, nullable=False)
+    # "pending" | "sent" | "failed" | "no_endpoint"
+    delivery_status: str = SQLField(max_length=20, nullable=False, default="pending")
+    delivery_attempts: int = SQLField(default=0, nullable=False)
+    last_error: str | None = SQLField(max_length=500, default=None)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow, index=True)
 
 
 # -----------------------------------------------------------------------------
@@ -466,3 +614,250 @@ class UserResponse(SQLModel):
     tenant_id: UUID
     tenant_name: str
     created_at: datetime
+
+
+class UsageResponse(SQLModel):
+    """Response for the monthly usage metering endpoint."""
+
+    plan: str
+    period_start: datetime
+    period_end: datetime
+    monthly_limit: int | None = Field(
+        default=None, description="Evaluations allowed this period (null = unlimited)"
+    )
+    used: int = Field(description="Evaluations consumed this period")
+    remaining: int | None = Field(
+        default=None, description="Evaluations left this period (null = unlimited)"
+    )
+    enforcement_enabled: bool = Field(
+        description="Whether the quota is enforced (429 when exceeded) or metering-only"
+    )
+
+
+class FeedbackRequest(SQLModel):
+    """Request body for reporting an evaluation's outcome."""
+
+    outcome: FeedbackOutcome = Field(description="What actually happened downstream")
+    field_error_count: int | None = Field(
+        default=None, ge=0, le=10_000, description="Number of fields a human corrected (count only)"
+    )
+    review_seconds: int | None = Field(
+        default=None, ge=0, le=86_400, description="Human review time spent, in seconds"
+    )
+    source: str | None = Field(
+        default=None,
+        max_length=50,
+        description="Where the outcome came from (e.g. human_review, reconciliation, automated_qa)",
+    )
+
+
+class FeedbackResponse(SQLModel):
+    """Response for recorded evaluation feedback."""
+
+    evaluation_id: UUID
+    outcome: FeedbackOutcome
+    field_error_count: int | None = None
+    review_seconds: int | None = None
+    source: str | None = None
+    created_at: datetime
+    updated_at: datetime | None = None
+
+
+class CalibrationBand(SQLModel):
+    """Outcome accuracy within one reliability-score band."""
+
+    band_start: float
+    band_end: float
+    total: int = Field(description="Evaluations with feedback in this band")
+    correct: int = Field(description="Of those, how many were correct downstream")
+    accuracy: float | None = Field(default=None, description="correct / total (null if empty)")
+
+
+class CalibrationResponse(SQLModel):
+    """How decisions and reliability scores line up with reported outcomes."""
+
+    from_ts: datetime
+    to_ts: datetime
+    total_evaluations: int
+    feedback_count: int = Field(description="Evaluations in range with reported outcomes")
+    feedback_coverage: float | None = Field(
+        default=None, description="feedback_count / total_evaluations (null if no evaluations)"
+    )
+    auto_process_precision: float | None = Field(
+        default=None,
+        description="Of MATCH decisions with feedback, fraction that were correct downstream",
+    )
+    review_catch_rate: float | None = Field(
+        default=None,
+        description="Of flagged (non-MATCH) decisions with feedback, fraction that were actually bad",
+    )
+    errors_caught: int = Field(
+        description="Flagged evaluations confirmed bad — errors kept out of downstream systems"
+    )
+    missed_errors: int = Field(
+        description="MATCH (auto-process) evaluations that turned out corrected/rejected"
+    )
+    decision_outcomes: dict[str, dict[str, int]] = Field(
+        default_factory=dict, description="Counts by decision then outcome"
+    )
+    reliability_bands: list[CalibrationBand] = Field(default_factory=list)
+
+
+# -----------------------------------------------------------------------------
+# Alerting Schemas (table=False)
+# -----------------------------------------------------------------------------
+
+# Allowed enum values for alert rule validation.
+ALERT_METRICS = ("drift", "reliability", "unknown_provider")
+ALERT_COMPARATORS = ("gt", "lt", "eq")
+ALERT_SEVERITIES = ("info", "warning", "critical")
+ALERT_DELIVERY_STATUSES = ("pending", "sent", "failed", "no_endpoint")
+
+
+class AlertRuleCreate(SQLModel):
+    """Request body for creating an alert rule."""
+
+    name: str = Field(max_length=120)
+    metric: str = Field(description="drift | reliability | unknown_provider")
+    comparator: str = Field(default="gt", description="gt | lt | eq")
+    threshold: float | None = Field(default=None)
+    severity: str = Field(default="warning", description="info | warning | critical")
+    enabled: bool = Field(default=True)
+
+
+class AlertRuleResponse(SQLModel):
+    """Response body for an alert rule."""
+
+    id: UUID
+    name: str
+    metric: str
+    comparator: str
+    threshold: float | None
+    severity: str
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookCreate(SQLModel):
+    """Request body for creating a webhook endpoint."""
+
+    url: str = Field(max_length=2048, description="HTTPS endpoint to receive alert deliveries")
+    description: str | None = Field(default=None, max_length=255)
+
+
+class WebhookResponse(SQLModel):
+    """Response body for a webhook endpoint (never includes the secret)."""
+
+    id: UUID
+    url: str
+    description: str | None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookCreatedResponse(SQLModel):
+    """Response returned ONCE on webhook creation, includes the signing secret."""
+
+    id: UUID
+    url: str
+    description: str | None
+    enabled: bool
+    secret: str = Field(description="HMAC signing secret. Shown only once; store it securely.")
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookTestResponse(SQLModel):
+    """Result of sending a test webhook delivery."""
+
+    webhook_id: UUID
+    delivery_status: str
+    status_code: int | None = None
+    error: str | None = None
+
+
+class AlertEventRecord(SQLModel):
+    """Response body for a single alert event."""
+
+    id: UUID
+    evaluation_id: UUID | None
+    rule_id: UUID | None
+    metric: str
+    value: float | None
+    threshold: float | None
+    severity: str
+    message: str
+    delivery_status: str
+    delivery_attempts: int
+    last_error: str | None
+    created_at: datetime
+
+
+class AlertEventListResponse(SQLModel):
+    """Paginated response for listing alert events."""
+
+    items: list[AlertEventRecord]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+# -----------------------------------------------------------------------------
+# Analytics Schemas (table=False)
+# -----------------------------------------------------------------------------
+
+
+class AnalyticsSummaryResponse(SQLModel):
+    """Aggregate analytics summary over a time range."""
+
+    from_ts: datetime
+    to_ts: datetime
+    total_evaluations: int
+    decision_breakdown: dict[str, int] = Field(default_factory=dict)
+    avg_drift: float | None = None
+    p95_drift: float | None = None
+    avg_reliability: float | None = None
+    p95_reliability: float | None = None
+
+
+class AnalyticsTimeseriesBucket(SQLModel):
+    """A single time bucket in an analytics timeseries."""
+
+    bucket: datetime
+    total: int
+    decision_breakdown: dict[str, int] = Field(default_factory=dict)
+    avg_drift: float | None = None
+    avg_reliability: float | None = None
+
+
+class AnalyticsTimeseriesResponse(SQLModel):
+    """Timeseries analytics over a time range, bucketed by interval."""
+
+    from_ts: datetime
+    to_ts: datetime
+    interval: str
+    buckets: list[AnalyticsTimeseriesBucket] = Field(default_factory=list)
+
+
+class AnalyticsExtractorStat(SQLModel):
+    """Per-vendor extractor analytics."""
+
+    vendor: str | None
+    count: int
+    avg_drift: float | None = None
+    p95_drift: float | None = None
+    avg_reliability: float | None = None
+    avg_extractor_confidence: float | None = None
+    avg_extractor_latency_ms: float | None = None
+    decision_breakdown: dict[str, int] = Field(default_factory=dict)
+
+
+class AnalyticsExtractorResponse(SQLModel):
+    """Cross-vendor extractor analytics over a time range (tenant-scoped)."""
+
+    from_ts: datetime
+    to_ts: datetime
+    extractors: list[AnalyticsExtractorStat] = Field(default_factory=list)

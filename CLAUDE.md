@@ -60,10 +60,9 @@ control-plane/
 
 ## Technology Stack (MVP)
 
-### Infrastructure (3 Services)
+### Infrastructure (2 Services)
 - **PostgreSQL 16**: Event store with Row-Level Security (multi-tenant)
 - **Redis 7**: Cache, rate limiting, session state
-- **Temporal**: Workflow orchestration (durable execution)
 
 ### Application
 - **FastAPI**: Async API with automatic OpenAPI
@@ -143,9 +142,21 @@ make clean      # Stop containers, remove volumes
 | `/health` | GET | No | Health check |
 | `/v1/status` | GET | Yes | Detailed status |
 | `/v1/evaluate` | POST | Yes | Evaluate document metadata |
+| `/v1/evaluations/{id}/feedback` | POST | Yes | Report evaluation outcome |
 | `/v1/templates` | GET | Yes | List templates |
 | `/v1/templates` | POST | Yes | Register template |
 | `/v1/templates/{id}` | GET | Yes | Get template details |
+| `/v1/alert-rules` | GET/POST | Yes | List/create alert rules |
+| `/v1/alert-rules/{id}` | DELETE | Yes | Delete alert rule |
+| `/v1/webhooks` | GET/POST | Yes | List/create webhook endpoints |
+| `/v1/webhooks/{id}` | DELETE | Yes | Delete webhook endpoint |
+| `/v1/usage` | GET | Yes | Monthly usage vs plan quota |
+| `/v1/webhooks/{id}/test` | POST | Yes | Send signed test delivery |
+| `/v1/alerts` | GET | Yes | List alert events |
+| `/v1/analytics/summary` | GET | Yes | Aggregate analytics |
+| `/v1/analytics/timeseries` | GET | Yes | Timeseries analytics |
+| `/v1/analytics/extractors` | GET | Yes | Per-vendor analytics |
+| `/v1/analytics/calibration` | GET | Yes | Scores vs reported outcomes |
 
 Authentication: Include `X-API-Key: cp_xxxxx` header.
 

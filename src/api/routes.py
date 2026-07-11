@@ -1,18 +1,21 @@
 """API routes for the Control Plane."""
 
+import asyncio
 import hashlib
 import json
 import time
+from datetime import datetime
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Request, status
+from pydantic import ValidationError
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid_extensions import uuid7
 
-from src.api.auth import CurrentTenant
+from src.api.auth import EvaluateTenant, ManageTemplatesTenant, ReadTenant
 from src.api.deps import TenantDbSession
 from src.api.errors import (
     EVALUATION_NOT_FOUND,
@@ -21,9 +24,16 @@ from src.api.errors import (
     ErrorCode,
     bad_request,
     conflict,
+    quota_exceeded,
 )
 from src.api.mappers import create_evaluation, evaluation_to_record, template_to_response
-from src.audit import log_audit_event, log_evaluation_requested, log_template_created
+from src.audit import (
+    log_alert_triggered,
+    log_audit_event,
+    log_evaluation_requested,
+    log_template_created,
+)
+from src.config import settings
 from src.metrics import record_evaluation
 from src.models import (
     AuditAction,
@@ -32,28 +42,43 @@ from src.models import (
     EvaluateRequest,
     EvaluateResponse,
     Evaluation,
+    EvaluationFeedback,
     EvaluationListResponse,
     EvaluationRecord,
     ExtractorProvider,
+    FeedbackRequest,
+    FeedbackResponse,
     ServiceStatus,
+    StructuralFeatures,
     Template,
     TemplateCreate,
     TemplateResponse,
     TemplateStatus,
     TemplateStatusUpdate,
     TemplateUpdate,
+    Tenant,
+    UsageResponse,
 )
+from src.services import usage as usage_service
+from src.services.alerting import dispatch_webhooks, evaluate_alerts
+from src.services.baseline import update_baseline
 from src.services.correction_rules import select_correction_rules
 from src.services.drift_detector import compute_drift_score
 from src.services.rate_limiter import get_redis_client
+from src.services.reliability_feedback import apply_reliability_feedback
 from src.services.reliability_scorer import compute_reliability_score
 from src.services.safeguard_engine import safeguard_engine
-from src.services.template_matcher import match_template
+from src.services.template_matcher import index_template, match_template, unindex_template
 
 logger = structlog.get_logger()
 
 # Provider cache TTL (5 minutes)
 PROVIDER_CACHE_TTL_SECONDS = 300
+
+# Strong references to fire-and-forget background tasks. asyncio only keeps weak
+# references to tasks, so an unreferenced task can be garbage-collected mid-flight.
+# We retain each task here and discard it via a done-callback once it finishes.
+_background_tasks: set[asyncio.Task[None]] = set()
 
 router = APIRouter()
 
@@ -164,6 +189,49 @@ async def get_template_or_404(template_id: UUID, db: AsyncSession) -> Template:
 # -----------------------------------------------------------------------------
 
 
+async def _tenant_usage(db: AsyncSession, tenant_id: UUID) -> usage_service.UsageSnapshot:
+    """Compute the current-month usage snapshot for a tenant.
+
+    ``db`` must be the tenant-scoped session (RLS restricts the count); the
+    tenant row itself carries the plan / custom limit in its settings.
+    """
+    tenant_row = await db.get(Tenant, tenant_id)
+    return await usage_service.get_usage(db, tenant_row.settings if tenant_row else None)
+
+
+async def _enforce_monthly_quota(db: AsyncSession, tenant_id: UUID, request: Request) -> None:
+    """Reject the request when the tenant's monthly quota is exhausted.
+
+    No-op unless ``USAGE_ENFORCE_QUOTA`` is enabled — the default posture is
+    metering-only, so a plan overage never silently breaks a customer pipeline.
+    When enforcement blocks a request, the event is recorded in the audit trail.
+    """
+    if not settings.usage_enforce_quota:
+        return
+
+    snapshot = await _tenant_usage(db, tenant_id)
+    if not snapshot.exceeded:
+        return
+
+    await log_audit_event(
+        action=AuditAction.QUOTA_EXCEEDED,
+        tenant_id=tenant_id,
+        details={
+            "plan": snapshot.plan,
+            "monthly_limit": snapshot.monthly_limit,
+            "used": snapshot.used,
+            "period_start": snapshot.period_start.isoformat(),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    raise quota_exceeded(
+        plan=snapshot.plan,
+        monthly_limit=snapshot.monthly_limit,
+        used=snapshot.used,
+        period_end=snapshot.period_end.isoformat(),
+    )
+
+
 @router.post(
     "/evaluate",
     response_model=EvaluateResponse,
@@ -173,7 +241,7 @@ async def get_template_or_404(template_id: UUID, db: AsyncSession) -> Template:
 async def evaluate(
     request: Request,
     body: EvaluateRequest,
-    tenant: CurrentTenant,
+    tenant: EvaluateTenant,
     db: TenantDbSession,
 ) -> EvaluateResponse:
     """Evaluate document extraction metadata and return governance decision.
@@ -191,6 +259,9 @@ async def evaluate(
     start_time = time.perf_counter()
     alerts: list[str] = []
 
+    # Quota gate (only when enforcement is enabled; metering-only by default).
+    await _enforce_monthly_quota(db, tenant.tenant_id, request)
+
     # Look up provider configuration (cached)
     provider = await get_cached_provider(body.extractor_metadata.vendor, db)
 
@@ -202,16 +273,33 @@ async def evaluate(
     )
     alerts.extend(validation_warnings)
 
-    # Match template
-    matched_template, match_confidence = await match_template(
-        fingerprint=body.layout_fingerprint,
-        features=body.structural_features,
-        tenant_id=tenant.tenant_id,
-        db=db,
-    )
+    # Hard safeguard failures (ERROR:-prefixed) reject early: garbage
+    # features must not be matched, scored, or blended into baselines. The
+    # evaluation is still recorded (the audit trail is the product), still
+    # metered, and the ERROR strings surface in the response alerts.
+    safeguard_errors = [w for w in validation_warnings if w.startswith("ERROR:")]
+
+    if safeguard_errors:
+        decision = Decision.REJECT
+        matched_template = None
+        match_confidence = 0.0
+        drift_score = 0.0
+        reliability_score = 0.0
+        correction_rules: list[dict] = []
+        template_version_id = None
+    else:
+        # Match template
+        matched_template, match_confidence = await match_template(
+            fingerprint=body.layout_fingerprint,
+            features=body.structural_features,
+            tenant_id=tenant.tenant_id,
+            db=db,
+        )
 
     # Determine decision based on match confidence
-    if matched_template is None or match_confidence < 0.50:
+    if safeguard_errors:
+        pass  # decision already REJECT
+    elif matched_template is None or match_confidence < 0.50:
         decision = Decision.NEW
         drift_score = 0.0
         reliability_score = await compute_reliability_score(
@@ -241,6 +329,17 @@ async def evaluate(
         )
         template_version_id = f"{matched_template.template_id}:{matched_template.version}"
 
+        # Rolling baseline: blend healthy, confident MATCHes into the template
+        # baseline (EWMA) so gradual legitimate evolution doesn't accumulate
+        # into permanent drift false alarms. Gated inside update_baseline:
+        # only MATCH-confidence, green-drift evaluations qualify, and identity
+        # fields (tables/pages/columns/header/footer) are never blended.
+        # Commits atomically with the evaluation below.
+        if decision == Decision.MATCH and update_baseline(
+            matched_template, body.structural_features, match_confidence, drift_score
+        ):
+            db.add(matched_template)
+
     # Generate evaluation ID and replay hash
     evaluation_id = uuid7()
     replay_hash = hashlib.sha256(
@@ -268,7 +367,51 @@ async def evaluate(
         processing_time_ms=processing_time_ms,
     )
     db.add(evaluation)
+
+    # Evaluate alert rules and stage AlertEvents in the SAME transaction so they
+    # commit atomically with the evaluation. Wrapped so alerting can never break
+    # the core evaluate path. Webhook NETWORK delivery is deferred to a
+    # fire-and-forget task after commit.
+    alert_event_ids: list[UUID] = []
+    alert_severities: list[str] = []
+    try:
+        events = await evaluate_alerts(
+            db,
+            tenant.tenant_id,
+            evaluation_id,
+            drift_score,
+            reliability_score,
+            provider is not None,
+            body.extractor_metadata.vendor,
+        )
+        alert_event_ids = [e.id for e in events]
+        alert_severities = [e.severity for e in events]
+    except Exception:
+        logger.warning("alert_evaluation_failed", evaluation_id=str(evaluation_id))
+
     await db.commit()
+
+    # After commit, fire-and-forget webhook delivery (delivery only is async).
+    if alert_event_ids:
+        try:
+            task = asyncio.create_task(dispatch_webhooks(tenant.tenant_id, alert_event_ids))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+        except Exception:
+            logger.warning("webhook_dispatch_schedule_failed", evaluation_id=str(evaluation_id))
+        try:
+            await log_alert_triggered(
+                tenant_id=tenant.tenant_id,
+                evaluation_id=evaluation_id,
+                alert_count=len(alert_event_ids),
+                severities=alert_severities,
+                ip_address=request.client.host if request.client else None,
+                request_id=UUID(request.state.request_id)
+                if hasattr(request.state, "request_id")
+                else None,
+            )
+        except Exception:
+            logger.warning("alert_triggered_audit_failed", evaluation_id=str(evaluation_id))
 
     # Log audit event
     await log_evaluation_requested(
@@ -321,7 +464,7 @@ async def evaluate(
     summary="List evaluation history",
 )
 async def list_evaluations(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     decision_filter: Decision | None = None,
     correlation_id: str | None = None,
@@ -409,7 +552,7 @@ async def list_evaluations(
 )
 async def get_evaluation(
     evaluation_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
 ) -> EvaluationRecord:
     """Get details of a specific evaluation.
@@ -435,6 +578,106 @@ async def get_evaluation(
     return evaluation_to_record(evaluation, template_version_id)
 
 
+@router.post(
+    "/evaluations/{evaluation_id}/feedback",
+    response_model=FeedbackResponse,
+    tags=["Evaluations"],
+    summary="Report the downstream outcome of an evaluation",
+)
+async def submit_feedback(
+    request: Request,
+    evaluation_id: UUID,
+    body: FeedbackRequest,
+    tenant: EvaluateTenant,
+    db: TenantDbSession,
+) -> FeedbackResponse:
+    """Close the loop: report what actually happened to an evaluated document.
+
+    Outcomes (correct / corrected / rejected — metadata only, never content)
+    calibrate reliability scores against reality and power the ROI analytics
+    at /v1/analytics/calibration. One feedback record per evaluation;
+    resubmitting updates it. RLS scopes the evaluation lookup to the tenant.
+    """
+    evaluation = (
+        await db.execute(select(Evaluation).where(Evaluation.id == evaluation_id))
+    ).scalar_one_or_none()
+    if not evaluation:
+        raise EVALUATION_NOT_FOUND
+
+    existing = (
+        await db.execute(
+            select(EvaluationFeedback).where(EvaluationFeedback.evaluation_id == evaluation_id)
+        )
+    ).scalar_one_or_none()
+
+    outcome_changed = existing is None or existing.outcome != body.outcome
+
+    if existing:
+        existing.outcome = body.outcome
+        existing.field_error_count = body.field_error_count
+        existing.review_seconds = body.review_seconds
+        existing.source = body.source
+        existing.updated_at = datetime.utcnow()
+        feedback = existing
+    else:
+        feedback = EvaluationFeedback(
+            tenant_id=tenant.tenant_id,
+            evaluation_id=evaluation_id,
+            outcome=body.outcome,
+            field_error_count=body.field_error_count,
+            review_seconds=body.review_seconds,
+            source=body.source,
+        )
+        db.add(feedback)
+
+    # Reliability self-calibration: one EWMA step of the matched template's
+    # baseline_reliability toward the observed outcome — applied on first
+    # submission or when a resubmission CHANGES the outcome (identical replays
+    # are no-ops, so one document can't ratchet a baseline down). Same
+    # transaction as the feedback row. FOR UPDATE guards concurrent feedback
+    # on evaluations sharing a template.
+    baseline_shift: dict[str, float] | None = None
+    if outcome_changed and evaluation.template_id is not None:
+        template = await db.get(Template, evaluation.template_id, with_for_update=True)
+        if template is not None:
+            baseline_old = template.baseline_reliability
+            if apply_reliability_feedback(template, body.outcome):
+                db.add(template)
+                baseline_shift = {
+                    "baseline_old": baseline_old,
+                    "baseline_new": template.baseline_reliability,
+                }
+
+    await db.commit()
+
+    await log_audit_event(
+        action=AuditAction.FEEDBACK_RECORDED,
+        tenant_id=tenant.tenant_id,
+        actor_id=tenant.api_key_id,
+        resource_type="evaluation",
+        resource_id=evaluation_id,
+        details={
+            "outcome": body.outcome.value,
+            "decision": evaluation.decision.value
+            if hasattr(evaluation.decision, "value")
+            else str(evaluation.decision),
+            "updated": existing is not None,
+            **(baseline_shift or {}),
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return FeedbackResponse(
+        evaluation_id=evaluation_id,
+        outcome=feedback.outcome,
+        field_error_count=feedback.field_error_count,
+        review_seconds=feedback.review_seconds,
+        source=feedback.source,
+        created_at=feedback.created_at,
+        updated_at=feedback.updated_at,
+    )
+
+
 # -----------------------------------------------------------------------------
 # Template Endpoints
 # -----------------------------------------------------------------------------
@@ -447,7 +690,7 @@ async def get_evaluation(
     summary="List templates",
 )
 async def list_templates(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
     status_filter: TemplateStatus | None = None,
     limit: int = 100,
@@ -480,7 +723,7 @@ async def list_templates(
 async def create_template(
     request: Request,
     body: TemplateCreate,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Register a new document template.
@@ -525,6 +768,10 @@ async def create_template(
     # Note: No refresh needed - all fields are populated from the constructor
     # Refresh would fail with RLS because SET LOCAL expires after commit
 
+    # Populate the LSH index (recall-only accelerator; exception-safe no-op
+    # when Redis/LSH is unavailable — matching falls back to the O(n) scan).
+    await index_template(template.id, tenant.tenant_id, body.structural_features)
+
     # Log audit event
     await log_template_created(
         tenant_id=tenant.tenant_id,
@@ -556,7 +803,7 @@ async def create_template(
 )
 async def get_template(
     template_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Get details of a specific template.
@@ -578,7 +825,7 @@ async def update_template(
     request: Request,
     template_id: UUID,
     body: TemplateUpdate,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Update a template's configurable fields.
@@ -636,7 +883,7 @@ async def update_template(
 async def delete_template(
     request: Request,
     template_id: UUID,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> None:
     """Deprecate a template (soft delete).
@@ -657,6 +904,9 @@ async def delete_template(
     template.status = TemplateStatus.DEPRECATED
     db.add(template)
     await db.commit()
+
+    # Deprecated templates must stop appearing as LSH candidates.
+    await unindex_template(template.id)
 
     # Log audit event
     await log_audit_event(
@@ -685,7 +935,7 @@ async def update_template_status(
     request: Request,
     template_id: UUID,
     body: TemplateStatusUpdate,
-    tenant: CurrentTenant,
+    tenant: ManageTemplatesTenant,
     db: TenantDbSession,
 ) -> TemplateResponse:
     """Change a template's status.
@@ -710,6 +960,17 @@ async def update_template_status(
     template.status = body.status
     db.add(template)
     await db.commit()
+
+    # Keep the LSH candidate set in sync with ACTIVE status.
+    if body.status == TemplateStatus.ACTIVE and old_status != TemplateStatus.ACTIVE:
+        try:
+            reindex_features = StructuralFeatures.model_validate(template.structural_features)
+        except ValidationError:
+            logger.warning("lsh_reindex_invalid_features", template_id=str(template.id))
+        else:
+            await index_template(template.id, tenant.tenant_id, reindex_features)
+    elif old_status == TemplateStatus.ACTIVE and body.status != TemplateStatus.ACTIVE:
+        await unindex_template(template.id)
 
     # Log audit event
     await log_audit_event(
@@ -743,7 +1004,7 @@ async def update_template_status(
     summary="Get detailed service status",
 )
 async def get_status(
-    tenant: CurrentTenant,
+    tenant: ReadTenant,
     db: TenantDbSession,
 ) -> DetailedHealthResponse:
     """Get detailed service status (requires authentication).
@@ -785,4 +1046,32 @@ async def get_status(
         status="healthy" if all_healthy else "degraded",
         version="0.1.0",
         services=services,
+    )
+
+
+@router.get(
+    "/usage",
+    response_model=UsageResponse,
+    tags=["Usage"],
+    summary="Monthly usage metering",
+)
+async def get_usage(
+    tenant: ReadTenant,
+    db: TenantDbSession,
+) -> UsageResponse:
+    """Evaluations consumed this calendar month (UTC) against the plan quota.
+
+    ``monthly_limit``/``remaining`` are null for unlimited (enterprise) plans.
+    ``enforcement_enabled`` reports whether an exhausted quota blocks
+    /v1/evaluate (429 QUOTA_EXCEEDED) or usage is metering-only.
+    """
+    snapshot = await _tenant_usage(db, tenant.tenant_id)
+    return UsageResponse(
+        plan=snapshot.plan,
+        period_start=snapshot.period_start,
+        period_end=snapshot.period_end,
+        monthly_limit=snapshot.monthly_limit,
+        used=snapshot.used,
+        remaining=snapshot.remaining,
+        enforcement_enabled=settings.usage_enforce_quota,
     )

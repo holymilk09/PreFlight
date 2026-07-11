@@ -1,5 +1,11 @@
 # Capability Specifications
 
+> **Status note (July 2026):** parts of this document describe the *target*
+> architecture (Kafka, Trillian, TimescaleDB, Temporal, event sourcing). The
+> shipped system is intentionally simpler: FastAPI + PostgreSQL (RLS) + Redis,
+> with alerting/webhooks in-process. See [CLAUDE.md](../CLAUDE.md) and the
+> [README](../README.md) for what actually runs today.
+
 This document contains the detailed algorithm specifications and reference implementations for all 14 capabilities of the Document Extraction Control Plane.
 
 ---

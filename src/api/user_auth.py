@@ -1,7 +1,7 @@
 """User authentication routes for signup, login, and user info."""
 
-from datetime import datetime
-from typing import Annotated
+from datetime import datetime, timedelta
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -162,6 +162,27 @@ async def signup(
         )
 
 
+def _raise_login_locked(locked_until: datetime, now: datetime) -> NoReturn:
+    """Raise the response for an account that is currently locked.
+
+    Honors ``settings.login_lockout_reveal``: when False (default) the response
+    is indistinguishable from a wrong password (generic 401) so the lock does not
+    become an account-enumeration oracle; when True it returns 429 + Retry-After
+    so a legitimate user learns to wait. Either way the lock is enforced.
+    """
+    if settings.login_lockout_reveal:
+        retry_after = max(1, int((locked_until - now).total_seconds()))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Try again later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid email or password",
+    )
+
+
 @router.post(
     "/login",
     response_model=AuthResponse,
@@ -209,22 +230,71 @@ async def login(
                 detail="Account is disabled",
             )
 
-        # Verify password
-        if not verify_password(body.password, user.password_hash):
+        now = datetime.utcnow()
+
+        # Lockout gate: reject (even with a correct password) while a lock is
+        # active. Checked before password verification so a locked account is a
+        # hard stop, and we avoid spending bcrypt cycles during a brute-force.
+        if user.locked_until is not None and user.locked_until > now:
             await log_audit_event(
                 action=AuditAction.AUTH_FAILED,
                 tenant_id=tenant.id,
                 actor_id=user.id,
-                details={"email": body.email, "reason": "invalid_password"},
+                details={"email": body.email, "reason": "account_locked"},
                 ip_address=request.client.host if request.client else None,
             )
+            _raise_login_locked(user.locked_until, now)
+
+        # Verify password
+        if not verify_password(body.password, user.password_hash):
+            # Count this failure and lock the account once the threshold is hit.
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            attempt_number = user.failed_login_count
+            newly_locked = attempt_number >= settings.login_max_failed_attempts
+            if newly_locked:
+                user.locked_until = now + timedelta(minutes=settings.login_lockout_minutes)
+                # Reset the counter so the lock window — not a runaway counter —
+                # governs; after it expires the user gets a fresh set of attempts.
+                user.failed_login_count = 0
+            session.add(user)
+            await session.commit()
+
+            await log_audit_event(
+                action=AuditAction.AUTH_FAILED,
+                tenant_id=tenant.id,
+                actor_id=user.id,
+                details={
+                    "email": body.email,
+                    "reason": "invalid_password",
+                    "attempt": attempt_number,
+                    "locked": newly_locked,
+                },
+                ip_address=request.client.host if request.client else None,
+            )
+            if newly_locked:
+                await log_audit_event(
+                    action=AuditAction.ACCOUNT_LOCKED,
+                    tenant_id=tenant.id,
+                    actor_id=user.id,
+                    resource_type="user",
+                    resource_id=user.id,
+                    details={
+                        "email": body.email,
+                        "locked_until": user.locked_until.isoformat(),
+                        "threshold": settings.login_max_failed_attempts,
+                    },
+                    ip_address=request.client.host if request.client else None,
+                )
+                _raise_login_locked(user.locked_until, now)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
 
-        # Update last login
-        user.last_login_at = datetime.utcnow()
+        # Successful login: clear any prior failure/lock state and stamp login.
+        user.failed_login_count = 0
+        user.locked_until = None
+        user.last_login_at = now
         session.add(user)
         await session.commit()
 

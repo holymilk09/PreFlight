@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 # revision identifiers
 revision = "003_add_extractor_providers"
-down_revision = "002_add_users_table"
+down_revision = "002_users"
 branch_labels = None
 depends_on = None
 

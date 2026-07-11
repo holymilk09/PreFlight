@@ -7,8 +7,8 @@ from fastapi import Depends, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import db
 from src.api.auth import CurrentTenant
-from src.db import async_session_maker
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -16,8 +16,13 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
     Use get_tenant_db for tenant-scoped operations with RLS.
     This is for admin/system operations only.
+
+    The session maker is resolved from the ``db`` module at call time (rather
+    than bound at import) so test fixtures that patch ``db.async_session_maker``
+    take effect here too — otherwise this dependency would keep using the
+    production engine and leak connections across event loops in tests.
     """
-    async with async_session_maker() as session:
+    async with db.async_session_maker() as session:
         try:
             yield session
         finally:
@@ -34,7 +39,7 @@ async def get_tenant_db(
 
     Must be used with an authenticated request (CurrentTenant dependency).
     """
-    async with async_session_maker() as session:
+    async with db.async_session_maker() as session:
         try:
             # Set tenant context for RLS policies using set_config()
             # This is parameterized and safe from SQL injection.

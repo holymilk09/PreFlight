@@ -1,6 +1,6 @@
 """Tests for user authentication routes."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -217,6 +217,8 @@ class TestLogin:
         mock_user.is_active = True
         mock_user.password_hash = "hashed"
         mock_user.id = uuid7()
+        mock_user.failed_login_count = 0
+        mock_user.locked_until = None
         mock_tenant = MagicMock()
         mock_tenant.id = uuid7()
 
@@ -254,6 +256,8 @@ class TestLogin:
         mock_user.id = uuid7()
         mock_user.email = "user@example.com"
         mock_user.role = "user"
+        mock_user.failed_login_count = 0
+        mock_user.locked_until = None
         mock_tenant = MagicMock()
         mock_tenant.id = uuid7()
 
@@ -276,6 +280,215 @@ class TestLogin:
 
             assert response.access_token == "test_token"
             assert response.token_type == "bearer"
+
+
+class TestLoginLockout:
+    """Tests for per-user login lockout (brute-force protection)."""
+
+    @staticmethod
+    def _mock_session_with_user(mock_user, mock_tenant):
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.first.return_value = (mock_user, mock_tenant)
+        mock_session.execute.return_value = mock_result
+        return mock_session
+
+    @pytest.mark.asyncio
+    async def test_locked_account_returns_generic_401_by_default(self):
+        """An active lock returns the generic 401 (no enumeration) and skips bcrypt."""
+        from fastapi import HTTPException
+
+        from src.api.user_auth import login
+        from src.models import LoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+
+        mock_user = MagicMock()
+        mock_user.is_active = True
+        mock_user.password_hash = "hashed"
+        mock_user.id = uuid7()
+        mock_user.failed_login_count = 0
+        mock_user.locked_until = datetime.utcnow() + timedelta(minutes=10)
+        mock_tenant = MagicMock()
+        mock_tenant.id = uuid7()
+
+        mock_session = self._mock_session_with_user(mock_user, mock_tenant)
+        body = LoginRequest(email="user@example.com", password="correctpassword")
+
+        verify = MagicMock(return_value=True)
+        with (
+            patch("src.api.user_auth.async_session_maker") as mock_session_maker,
+            patch("src.api.user_auth.verify_password", verify),
+            patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock),
+            patch("src.api.user_auth.settings.login_lockout_reveal", False),
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_session
+
+            with pytest.raises(HTTPException) as exc_info:
+                await login(request=mock_request, body=body)
+
+            assert exc_info.value.status_code == 401
+            assert exc_info.value.detail == "Invalid email or password"
+            # Locked accounts are a hard stop *before* the password is checked.
+            verify.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_locked_account_returns_429_when_reveal_enabled(self):
+        """With reveal enabled, a locked account gets 429 + Retry-After."""
+        from fastapi import HTTPException
+
+        from src.api.user_auth import login
+        from src.models import LoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+
+        mock_user = MagicMock()
+        mock_user.is_active = True
+        mock_user.password_hash = "hashed"
+        mock_user.id = uuid7()
+        mock_user.failed_login_count = 0
+        mock_user.locked_until = datetime.utcnow() + timedelta(minutes=10)
+        mock_tenant = MagicMock()
+        mock_tenant.id = uuid7()
+
+        mock_session = self._mock_session_with_user(mock_user, mock_tenant)
+        body = LoginRequest(email="user@example.com", password="whatever")
+
+        with (
+            patch("src.api.user_auth.async_session_maker") as mock_session_maker,
+            patch("src.api.user_auth.verify_password", return_value=False),
+            patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock),
+            patch("src.api.user_auth.settings.login_lockout_reveal", True),
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_session
+
+            with pytest.raises(HTTPException) as exc_info:
+                await login(request=mock_request, body=body)
+
+            assert exc_info.value.status_code == 429
+            assert "Retry-After" in exc_info.value.headers
+            assert int(exc_info.value.headers["Retry-After"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_failed_attempt_increments_counter_without_locking(self):
+        """A wrong password below the threshold increments the counter only."""
+        from fastapi import HTTPException
+
+        from src.api.user_auth import login
+        from src.models import LoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+
+        mock_user = MagicMock()
+        mock_user.is_active = True
+        mock_user.password_hash = "hashed"
+        mock_user.id = uuid7()
+        mock_user.failed_login_count = 1
+        mock_user.locked_until = None
+        mock_tenant = MagicMock()
+        mock_tenant.id = uuid7()
+
+        mock_session = self._mock_session_with_user(mock_user, mock_tenant)
+        body = LoginRequest(email="user@example.com", password="wrong")
+
+        with (
+            patch("src.api.user_auth.async_session_maker") as mock_session_maker,
+            patch("src.api.user_auth.verify_password", return_value=False),
+            patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock),
+            patch("src.api.user_auth.settings.login_max_failed_attempts", 5),
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_session
+
+            with pytest.raises(HTTPException) as exc_info:
+                await login(request=mock_request, body=body)
+
+            assert exc_info.value.status_code == 401
+            assert mock_user.failed_login_count == 2
+            assert mock_user.locked_until is None
+            mock_session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_threshold_failure_locks_account_and_audits(self):
+        """The failure that hits the threshold sets locked_until, resets the
+        counter, and emits an ACCOUNT_LOCKED audit event."""
+        from fastapi import HTTPException
+
+        from src.api.user_auth import login
+        from src.models import AuditAction, LoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+
+        mock_user = MagicMock()
+        mock_user.is_active = True
+        mock_user.password_hash = "hashed"
+        mock_user.id = uuid7()
+        mock_user.failed_login_count = 2  # threshold is 3 -> this attempt locks
+        mock_user.locked_until = None
+        mock_tenant = MagicMock()
+        mock_tenant.id = uuid7()
+
+        mock_session = self._mock_session_with_user(mock_user, mock_tenant)
+        body = LoginRequest(email="user@example.com", password="wrong")
+
+        with (
+            patch("src.api.user_auth.async_session_maker") as mock_session_maker,
+            patch("src.api.user_auth.verify_password", return_value=False),
+            patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock) as mock_log,
+            patch("src.api.user_auth.settings.login_max_failed_attempts", 3),
+            patch("src.api.user_auth.settings.login_lockout_minutes", 15),
+            patch("src.api.user_auth.settings.login_lockout_reveal", False),
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_session
+
+            with pytest.raises(HTTPException) as exc_info:
+                await login(request=mock_request, body=body)
+
+            assert exc_info.value.status_code == 401  # generic, reveal disabled
+            assert mock_user.locked_until is not None
+            assert mock_user.failed_login_count == 0  # reset once locked
+            logged_actions = [c.kwargs.get("action") for c in mock_log.call_args_list]
+            assert AuditAction.ACCOUNT_LOCKED in logged_actions
+
+    @pytest.mark.asyncio
+    async def test_successful_login_clears_lock_state(self):
+        """A successful login resets the failure counter and clears any lock."""
+        from src.api.user_auth import login
+        from src.models import LoginRequest
+
+        mock_request = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+
+        mock_user = MagicMock()
+        mock_user.is_active = True
+        mock_user.password_hash = "hashed"
+        mock_user.id = uuid7()
+        mock_user.email = "user@example.com"
+        mock_user.role = "user"
+        mock_user.failed_login_count = 3  # prior failures, but no active lock
+        mock_user.locked_until = None
+        mock_tenant = MagicMock()
+        mock_tenant.id = uuid7()
+
+        mock_session = self._mock_session_with_user(mock_user, mock_tenant)
+        body = LoginRequest(email="user@example.com", password="correctpassword")
+
+        with (
+            patch("src.api.user_auth.async_session_maker") as mock_session_maker,
+            patch("src.api.user_auth.verify_password", return_value=True),
+            patch("src.api.user_auth.log_audit_event", new_callable=AsyncMock),
+            patch("src.api.user_auth.create_access_token", return_value="test_token"),
+        ):
+            mock_session_maker.return_value.__aenter__.return_value = mock_session
+
+            response = await login(request=mock_request, body=body)
+
+            assert response.access_token == "test_token"
+            assert mock_user.failed_login_count == 0
+            assert mock_user.locked_until is None
 
 
 class TestGetMe:

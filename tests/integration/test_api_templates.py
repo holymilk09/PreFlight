@@ -255,3 +255,39 @@ class TestGetTemplate:
         assert data["id"] == template_id
         assert data["template_id"] == valid_template_create_data["template_id"]
         assert data["version"] == valid_template_create_data["version"]
+
+
+class TestLshLifecycle:
+    """Template lifecycle keeps the LSH candidate index in sync."""
+
+    @pytest.mark.asyncio
+    async def test_create_indexes_template(self, authenticated_client, valid_template_create_data):
+        from unittest.mock import AsyncMock, patch
+
+        with patch(
+            "src.api.routes.index_template", new_callable=AsyncMock, return_value=True
+        ) as mock_index:
+            payload = dict(valid_template_create_data)
+            payload["template_id"] = "LSH-LIFE-001"
+            resp = await authenticated_client.post("/v1/templates", json=payload)
+            assert resp.status_code in (200, 201)
+            mock_index.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_deprecate_unindexes_template(
+        self, authenticated_client, valid_template_create_data
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        payload = dict(valid_template_create_data)
+        payload["template_id"] = "LSH-LIFE-002"
+        resp = await authenticated_client.post("/v1/templates", json=payload)
+        assert resp.status_code in (200, 201)
+        template_uuid = resp.json()["id"]
+
+        with patch(
+            "src.api.routes.unindex_template", new_callable=AsyncMock, return_value=True
+        ) as mock_unindex:
+            resp = await authenticated_client.delete(f"/v1/templates/{template_uuid}")
+            assert resp.status_code in (200, 204)
+            mock_unindex.assert_awaited_once()

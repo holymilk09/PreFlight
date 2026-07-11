@@ -42,49 +42,44 @@ if result.decision == "REVIEW":
 
 ## Quick Start
 
-### 1. Install
+### 1. Install the SDK
 
 ```bash
-pip install httpx  # We use HTTP, no SDK yet
+pip install ./sdk    # preflight-sdk: adapters for Textract, Azure DI, Google DocAI, Upstage
 ```
 
-### 2. Send Metadata After Extraction
+### 2. Evaluate After Extraction (3 lines)
 
 ```python
-import httpx
+from preflight_sdk import PreFlight
+from preflight_sdk.adapters import textract  # or azure, google, upstage
 
 # Your normal extraction
-textract_response = textract.analyze_document(...)
+textract_response = textract_client.analyze_document(...)
 
-# Extract structural features (bounding boxes, counts)
-features = {
-    "element_count": len(blocks),
-    "table_count": len(tables),
-    "text_block_count": len(text_blocks),
-    "bounding_boxes": [{"x": 0.1, "y": 0.2, ...}, ...]
-    # ... see docs for full schema
-}
+# Reduce to structural metadata locally — content never leaves your environment
+features = textract.extract_features(textract_response)
 
-# Evaluate with PreFlight
-result = httpx.post(
-    "https://api.preflight.dev/v1/evaluate",
-    headers={"X-API-Key": "cp_your_key"},
-    json={
-        "structural_features": features,
-        "layout_fingerprint": compute_hash(features),
-        "extractor_metadata": {"vendor": "aws", "model": "textract", ...},
-        "client_doc_hash": "sha256_of_your_doc",
-        "client_correlation_id": "invoice-123",
-        "pipeline_id": "invoices-prod"
-    }
-).json()
+client = PreFlight(api_key="cp_your_key", base_url="https://your-deploy")
+result = client.evaluate(
+    features,
+    vendor="aws", model="textract", version="2023-01", confidence=0.95,
+    doc_hash="sha256_of_your_doc", correlation_id="invoice-123",
+)
 
-print(result["decision"])       # MATCH, REVIEW, NEW, or REJECT
-print(result["drift_score"])    # 0.0 to 1.0
+print(result["decision"])           # MATCH, REVIEW, NEW, or REJECT
+print(result["drift_score"])        # 0.0 to 1.0
 print(result["reliability_score"])  # 0.0 to 1.0
 ```
 
-### 3. Handle the Decision
+### 3. Close the loop (calibrates scores, proves ROI)
+
+```python
+client.submit_feedback(result["evaluation_id"], "corrected", field_error_count=2)
+client.get_calibration()  # errors caught vs missed, accuracy per score band
+```
+
+### 4. Handle the Decision
 
 | Decision | Meaning | Action |
 |----------|---------|--------|
@@ -112,10 +107,17 @@ railway up
 
 ### Deploy to Render
 
-```bash
-# Connect your repo at render.com/blueprints
-# Render auto-detects render.yaml
-```
+Connect your repo at [render.com/blueprints](https://render.com/blueprints) — Render
+auto-detects `render.yaml` and stands up the full stack with no manual env setup:
+
+- Provisions the managed **PostgreSQL** and **Redis** and wires their connection
+  strings in (the `postgres://` scheme is normalized to `asyncpg` automatically).
+- **Generates** the required `JWT_SECRET` and `API_KEY_SALT` secrets.
+- Runs `alembic upgrade head` on every deploy via `preDeployCommand`, before the
+  new image goes live.
+- Boots fail-closed (`SECURITY_FAIL_CLOSED=true`) with API docs disabled.
+
+`SENTRY_DSN` is the only optional value to set by hand in the dashboard.
 
 ### Local Development
 
@@ -127,7 +129,7 @@ cd preflight
 cp .env.example .env
 # Edit .env with secrets: openssl rand -hex 32
 
-# Start infrastructure (simplified, no Temporal)
+# Start infrastructure
 docker compose -f docker-compose.simple.yml up -d
 
 # Install and run
@@ -155,6 +157,10 @@ uvicorn src.api.main:app --reload
 - [Quickstart Guide](docs/QUICKSTART.md) - 5-minute integration
 - [API Reference](docs/API.md) - Full endpoint docs
 - [Architecture](docs/ARCHITECTURE.md) - System design
+- [Business Model & GTM](docs/GTM.md) - What we sell, to whom, and how
+- [Scorecard](docs/SCORECARD.md) - Measured algorithm quality, honest limits
+- [How It Works](docs/HOW_IT_WORKS.md) - Plain-English explanation (the sales script)
+- [Operator Runbook](docs/RUNBOOK.md) - Ship, monitor, support, and onboard a client
 
 ## Why Metadata-Only?
 

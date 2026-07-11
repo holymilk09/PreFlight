@@ -25,8 +25,6 @@ dependencies = [
     # Redis
     "redis>=5.0.0",
 
-    # Temporal
-    "temporalio>=1.4.0",
 
     # HTTP Client
     "httpx>=0.26.0",
@@ -35,6 +33,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "PyJWT>=2.8.0",
     "bcrypt>=4.1.0",
+    "cryptography>=41.0.0",
 
     # Utilities
     "uuid7>=0.1.0",
@@ -100,6 +99,7 @@ ignore = [
     "ARG002", # Unused method argument (false positive for pytest fixtures)
     "ARG003", # Unused class method argument (false positive for Pydantic validators)
     "SIM108", # Use ternary operator (style preference)
+    "UP042",  # str+Enum vs StrEnum: changing the base alters str() semantics (serialization risk)
 ]
 
 [tool.ruff.lint.isort]
@@ -123,12 +123,12 @@ plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
 module = [
-    "temporalio.*",
     "redis.*",
+    "uuid_extensions.*",
 ]
 ignore_missing_imports = true
 
-# SQLAlchemy, Redis, and Temporal modules have poor type stubs
+# SQLAlchemy and Redis modules have poor type stubs
 [[tool.mypy.overrides]]
 module = [
     "src.api.*",
@@ -153,6 +153,9 @@ addopts = [
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",
+]
+markers = [
+    "validation: dataset-driven validation tests (excluded from `make test`; run via `make test-validation`)",
 ]
 
 # Coverage configuration

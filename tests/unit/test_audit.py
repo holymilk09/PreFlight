@@ -44,8 +44,24 @@ class TestAuditAction:
         assert action == "api_key_created"
 
     def test_audit_action_members(self):
-        """AuditAction should have 16 members."""
-        assert len(AuditAction) == 16
+        """AuditAction should include the original 16 plus Phase 1 additions."""
+        # 16 original + 6 Phase 1 (security_degraded, alert_triggered,
+        # alert_rule_created/deleted, webhook_created/deleted) + 3 Phase A
+        # (account_locked: login lockout; quota_exceeded: usage metering;
+        # feedback_recorded: outcome loop).
+        assert len(AuditAction) == 25
+        for member in (
+            "SECURITY_DEGRADED",
+            "ALERT_TRIGGERED",
+            "ALERT_RULE_CREATED",
+            "ALERT_RULE_DELETED",
+            "WEBHOOK_CREATED",
+            "WEBHOOK_DELETED",
+            "ACCOUNT_LOCKED",
+            "QUOTA_EXCEEDED",
+            "FEEDBACK_RECORDED",
+        ):
+            assert hasattr(AuditAction, member)
 
 
 class TestAuditLog:

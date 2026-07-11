@@ -147,9 +147,12 @@ class TestCheckRateLimit:
     """Tests for check_rate_limit function."""
 
     @pytest.mark.asyncio
-    async def test_check_rate_limit_bypasses_when_circuit_open(self):
-        """Should bypass rate limiting when circuit breaker is open."""
+    async def test_check_rate_limit_bypasses_when_circuit_open(self, monkeypatch):
+        """Should bypass (fail-open) when circuit open AND fail-closed disabled."""
         import src.services.rate_limiter as rate_limiter
+
+        # Legacy fail-open behavior requires fail-closed disabled.
+        monkeypatch.setattr(rate_limiter.settings, "security_fail_closed", False)
 
         # Open circuit breaker
         rate_limiter._circuit_breaker_open = True
@@ -163,11 +166,14 @@ class TestCheckRateLimit:
         assert result.remaining == 100
 
     @pytest.mark.asyncio
-    async def test_check_rate_limit_handles_redis_error(self):
-        """Should fail-open when Redis is unavailable."""
+    async def test_check_rate_limit_handles_redis_error(self, monkeypatch):
+        """Should fail-open when Redis is unavailable AND fail-closed disabled."""
         from redis.exceptions import RedisError
 
         import src.services.rate_limiter as rate_limiter
+
+        # Legacy fail-open behavior requires fail-closed disabled.
+        monkeypatch.setattr(rate_limiter.settings, "security_fail_closed", False)
 
         # Reset circuit breaker
         rate_limiter._circuit_breaker_open = False

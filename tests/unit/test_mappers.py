@@ -35,9 +35,7 @@ class TestEvaluationToRecord:
             match_confidence=0.92,
             drift_score=0.12,
             reliability_score=0.88,
-            correction_rules=[
-                {"field": "total", "rule": "validate_sum", "parameters": None}
-            ],
+            correction_rules=[{"field": "total", "rule": "validate_sum", "parameters": None}],
             extractor_vendor="nvidia",
             extractor_model="nemotron-parse",
             extractor_version="1.2.0",

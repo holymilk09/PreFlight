@@ -109,9 +109,13 @@ class TestRateLimitMiddleware:
     """Tests for rate limit middleware."""
 
     @pytest.mark.asyncio
-    async def test_rate_limit_redis_error_fails_open(self):
-        """Should fail open when Redis is unavailable."""
+    async def test_rate_limit_redis_error_fails_open(self, monkeypatch):
+        """Should fail open when Redis is unavailable AND fail-closed disabled."""
+        from src.api import main
         from src.api.main import rate_limit_middleware
+
+        # Legacy fail-open behavior requires fail-closed disabled.
+        monkeypatch.setattr(main.settings, "security_fail_closed", False)
 
         mock_request = MagicMock(spec=Request)
         mock_request.headers.get.return_value = None  # No API key
@@ -130,6 +134,30 @@ class TestRateLimitMiddleware:
 
         # Should fail open and allow request through
         assert result == mock_response
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_redis_error_fails_closed_503(self, monkeypatch):
+        """Should return 503 when Redis is unavailable AND fail-closed enabled."""
+        from src.api import main
+        from src.api.main import rate_limit_middleware
+
+        monkeypatch.setattr(main.settings, "security_fail_closed", True)
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers.get.return_value = None  # No API key
+        mock_request.client.host = "127.0.0.1"
+        mock_request.url.path = "/v1/status"
+        mock_request.method = "GET"
+
+        mock_call_next = AsyncMock()
+
+        with patch("src.api.main.check_rate_limit") as mock_check:
+            mock_check.side_effect = ConnectionError("Redis unavailable")
+
+            result = await rate_limit_middleware(mock_request, mock_call_next)
+
+        assert result.status_code == 503
+        mock_call_next.assert_not_called()
 
 
 class TestExceptionHandler:
@@ -168,5 +196,7 @@ class TestAppConfiguration:
         """Health endpoint should be registered."""
         from src.api.main import app
 
-        routes = [route.path for route in app.routes]
+        # Starlette >= 1.0 wraps included routers in path-less objects, so only
+        # inspect entries that expose a path (/health is registered on the app).
+        routes = [route.path for route in app.routes if hasattr(route, "path")]
         assert "/health" in routes
